@@ -1,0 +1,3 @@
+-- Seed data removed: this migration previously contained development seed INSERTs
+-- Seeds were removed to avoid failing migrations in environments with strict numeric precision
+-- Add seed data via a separate optional script if needed (scripts/seed_purchases.js)

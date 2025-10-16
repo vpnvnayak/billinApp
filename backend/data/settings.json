@@ -1,0 +1,66 @@
+{
+  "name": "vpn store",
+  "address": "test address, athirapally,\nte\n\nkochi",
+  "contact": "8891321729",
+  "gst_id": "",
+  "bank_name": "Federal Bank",
+  "bank_branch": "NANTHENCODE",
+  "account_no": "13170110159827",
+  "ifsc": "fdrl0001317",
+  "account_name": "vipin",
+  "website": "",
+  "tax_rate": 0,
+  "timezone": "Asia/Kolkata",
+  "hours": [
+    {
+      "to": "18:00",
+      "day": "mon",
+      "from": "09:00",
+      "label": "Monday",
+      "enabled": true
+    },
+    {
+      "to": "18:00",
+      "day": "tue",
+      "from": "09:00",
+      "label": "Tuesday",
+      "enabled": true
+    },
+    {
+      "to": "18:00",
+      "day": "wed",
+      "from": "09:00",
+      "label": "Wednesday",
+      "enabled": true
+    },
+    {
+      "to": "18:00",
+      "day": "thu",
+      "from": "09:00",
+      "label": "Thursday",
+      "enabled": true
+    },
+    {
+      "to": "18:00",
+      "day": "fri",
+      "from": "09:00",
+      "label": "Friday",
+      "enabled": true
+    },
+    {
+      "to": "18:00",
+      "day": "sat",
+      "from": "09:00",
+      "label": "Saturday",
+      "enabled": false
+    },
+    {
+      "to": "18:00",
+      "day": "sun",
+      "from": "09:00",
+      "label": "Sunday",
+      "enabled": false
+    }
+  ],
+  "logo_url": "/uploads/1760339083172-Spice_Farm__2_.png"
+}

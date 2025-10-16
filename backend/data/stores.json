@@ -1,0 +1,29 @@
+[
+  {
+    "id": 1,
+    "name": "Spice Farm",
+    "username": "spice",
+    "email": "vpnvnayak@gmail.com",
+    "phone": "9876567899",
+    "password_hash": "$2b$10$I.I1C5nxlRle5XarI2WDLedoMpb.k2lhtBlvqdXpb8LwG4q6IfqYO",
+    "created_at": "2025-10-13T12:01:02.555Z"
+  },
+  {
+    "id": 2,
+    "name": "spice Farm",
+    "username": "spice",
+    "email": "vpnvnayak@gmail.com",
+    "phone": "8891321729",
+    "password_hash": "$2b$10$ZBoRZwG0ITWfkTjDGCs7O.F6cVPxqJnv6FwcbxU0LHcmYcJ.CwsB2",
+    "created_at": "2025-10-13T12:13:58.793Z"
+  },
+  {
+    "id": 3,
+    "name": "spice Farm",
+    "username": "spicE",
+    "email": "vpnvnayak@gmail.com",
+    "phone": "8891321729",
+    "password_hash": "$2b$10$49eEmC7I/0/tc19As9MXl.F0hHnbUio2cqtHPJKp4V01UJDA9ypji",
+    "created_at": "2025-10-13T12:17:30.226Z"
+  }
+]

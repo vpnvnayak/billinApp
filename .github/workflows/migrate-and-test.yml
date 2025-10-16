@@ -1,0 +1,78 @@
+name: Migrate and Test
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+
+jobs:
+  migrate-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: billing_test
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 10s --health-timeout 5s --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for Postgres
+        run: |
+          until pg_isready -h localhost -p 5432 -U postgres; do echo waiting; sleep 1; done
+      - name: Use Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Setup psql client
+        uses: harmon758/setup-postgres-client@v1
+        with:
+          version: '15'
+      - name: Create unique test database for this job
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          DB_NAME="billing_test_${GITHUB_RUN_ID}"
+          echo "Creating test database: ${DB_NAME}"
+          until pg_isready -h localhost -p 5432 -U postgres; do echo waiting for postgres; sleep 1; done
+          PGPASSWORD=postgres psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${DB_NAME}\";" postgres || true
+          echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/${DB_NAME}" >> $GITHUB_ENV
+      - name: Run migration scanner
+        working-directory: backend
+        run: node ./scripts/check-migrations.js
+      - name: Fail if migrate.js changed without marker
+        working-directory: backend
+        run: node ./scripts/check-migrate-change.js
+      - name: Run migrations
+        working-directory: backend
+        run: node ./scripts/migrate.js
+      - name: Seed auth data (roles/users)
+        working-directory: backend
+        run: node ./scripts/seedAuth.js
+      - name: Run tests
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          SCHEMA_CACHE_INIT_TIMEOUT_MS: '15000'
+        run: npm test --silent
+      - name: Drop test database (cleanup)
+        if: always()
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          # If DATABASE_URL isn't set for some reason, skip
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "DATABASE_URL not set, skipping drop"
+            exit 0
+          fi
+          # extract DB name from DATABASE_URL
+          DB_NAME=$(echo "$DATABASE_URL" | sed -E 's#.*/([^/?]+)(\?.*)?$#\1#')
+          echo "Dropping test database: $DB_NAME"
+          PGPASSWORD=postgres psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS \"${DB_NAME}\";" postgres || true
