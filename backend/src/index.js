@@ -33,14 +33,73 @@ app.use(cors({ origin: (origin, cb) => {
 	// allow non-browser requests with no origin
 	if (!origin) return cb(null, true);
 	if (allowed.indexOf(origin) !== -1) return cb(null, true);
+	// In development allow any localhost origin (any port) to avoid CORS issues with dev servers
+	if (NODE_ENV !== 'production' && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
 	return cb(new Error('Not allowed by CORS'));
 }, credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 
+// Simple E2E cleanup endpoint (only enabled when E2E_CLEANUP_TOKEN is set)
+if (process.env.E2E_CLEANUP_TOKEN) {
+	app.post('/api/_e2e/cleanup', async (req, res) => {
+		try {
+			const token = req.headers['x-e2e-token'] || req.body && req.body.token
+			if (token !== process.env.E2E_CLEANUP_TOKEN) return res.status(403).json({ ok: false, error: 'forbidden' })
+			const { storeIds = [], userIds = [], productIds = [], saleIds = [] } = req.body || {}
+			const client = await pool.connect()
+			try {
+				await client.query('BEGIN')
+				if (productIds && productIds.length) await client.query('DELETE FROM products WHERE id = ANY($1::int[])', [productIds])
+				// remove sale items and sales when saleIds provided
+				if (saleIds && saleIds.length) {
+					await client.query('DELETE FROM sale_items WHERE sale_id = ANY($1::int[])', [saleIds])
+					await client.query('DELETE FROM sales WHERE id = ANY($1::int[])', [saleIds])
+				}
+				if (userIds && userIds.length) await client.query('DELETE FROM users WHERE id = ANY($1::int[])', [userIds])
+				if (storeIds && storeIds.length) {
+					await client.query('DELETE FROM store_settings WHERE store_id = ANY($1::int[])', [storeIds])
+					await client.query('DELETE FROM stores WHERE id = ANY($1::int[])', [storeIds])
+				}
+				await client.query('COMMIT')
+				return res.json({ ok: true })
+			} catch (e) {
+				await client.query('ROLLBACK')
+				console.error('E2E cleanup failed', e)
+				return res.status(500).json({ ok: false, error: 'cleanup failed' })
+			} finally {
+				client.release()
+			}
+		} catch (e) {
+			console.error('E2E cleanup route error', e)
+			return res.status(500).json({ ok: false, error: 'error' })
+		}
+	})
+}
+
 // optional authentication: populate req.user when a valid Bearer token is present
 const optionalAuth = require('./middleware/optionalAuth')
 app.use(optionalAuth)
+
+// If a superadmin has selected a store from the UI, frontend sets a non-HttpOnly
+// cookie named 'selectedStore'. For convenience, map that into req.user.store_id
+// for the duration of the request so existing route logic that checks
+// req.user.store_id will automatically scope queries to the selected store.
+app.use((req, res, next) => {
+	try {
+		const sel = req.cookies && req.cookies.selectedStore
+		if (sel && req.user && Array.isArray(req.user.roles) && req.user.roles.includes('superadmin')) {
+			const sid = Number(sel)
+			if (!Number.isNaN(sid)) {
+				// set on the request user object only for this request
+				req.user.store_id = sid
+			}
+		}
+	} catch (e) {
+		// ignore errors and continue
+	}
+	next()
+})
 
 // initialize schema cache once at startup (best-effort)
 const schemaCache = require('./schemaCache')

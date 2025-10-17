@@ -12,6 +12,7 @@ export default function POS() {
   const [query, setQuery] = useState('')
   const [customers, setCustomers] = useState([])
   const [selectedCustomer, setSelectedCustomer] = useState(null)
+  const [selectedCustomerLoyalty, setSelectedCustomerLoyalty] = useState(0)
   const [showCreateCustomer, setShowCreateCustomer] = useState(false)
   const [newCustomerName, setNewCustomerName] = useState('')
   const [cart, setCart] = useState([])
@@ -92,6 +93,11 @@ export default function POS() {
       // API may return either an array or a paginated object { data, total }
       if (r.data && Array.isArray(r.data.data)) {
         setCustomers(r.data.data)
+        // if selectedCustomer present, refresh loyalty value
+        if (selectedCustomer) {
+          const found = (r.data.data || []).find(c => String(c.id) === String(selectedCustomer))
+          if (found) setSelectedCustomerLoyalty(Number(found.loyalty_points || 0))
+        }
       } else if (Array.isArray(r.data)) {
         setCustomers(r.data)
       } else {
@@ -210,6 +216,7 @@ export default function POS() {
   const [payLoading, setPayLoading] = useState(false)
   const [payMethod, setPayMethod] = useState('cash')
   const [cashGiven, setCashGiven] = useState('')
+  const [applyLoyaltyPoints, setApplyLoyaltyPoints] = useState(0)
   const [discountPercent, setDiscountPercent] = useState(0)
   const [discountRs, setDiscountRs] = useState(0)
   const [loyalty, setLoyalty] = useState(0)
@@ -232,7 +239,7 @@ export default function POS() {
     const payload = {
       items: cart.map(it => ({ product_id: safeInt32(it.id), sku: it.sku, name: it.name, qty: it.qty, price: it.price, tax_percent: it.tax_percent })),
       payment_method: payMethod,
-      payment_breakdown: { card: Number(cardAmount)||0, cash: Number(cashGiven)||0, upi: Number(upiAmount)||0, discount_percent: Number(discountPercent)||0, discount_rs: Number(discountRs)||0, loyalty: Number(loyalty)||0, remarks: remarks || '' },
+      payment_breakdown: { card: Number(cardAmount)||0, cash: Number(cashGiven)||0, upi: Number(upiAmount)||0, discount_percent: Number(discountPercent)||0, discount_rs: Number(discountRs)||0, loyalty_used: Number(applyLoyaltyPoints)||0, remarks: remarks || '' },
       user_id: selectedCustomer || null
     }
     try {
@@ -382,7 +389,11 @@ export default function POS() {
   const dp = Number(discountPercent) || 0
   const calcDiscountRs = (dp/100) * totalAmount
   const drs = Number(discountRs) || calcDiscountRs || 0
-  const payable = Math.max(0, totalAmount - drs - (Number(loyalty) || 0))
+  // loyalty application: applyLoyaltyPoints is points cashier wants to use (1 point = 1 Rs)
+  const requestedLoyalty = Math.max(0, Number(applyLoyaltyPoints) || 0)
+  const usableLoyalty = Math.max(0, Math.min(requestedLoyalty, Number(selectedCustomerLoyalty || 0)))
+  const payableBase = Math.max(0, totalAmount - drs)
+  const payable = Math.max(0, payableBase - usableLoyalty)
   const paid = (Number(cardAmount) || 0) + (Number(upiAmount) || 0) + (Number(cashGiven) || 0)
   const balanceToBePaid = Math.max(0, payable - paid)
   const changeDue = Math.max(0, paid - payable)
@@ -443,7 +454,12 @@ export default function POS() {
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: 'block', marginBottom: 6, color: 'var(--color-muted)' }}>Customer</label>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <select value={selectedCustomer || ''} onChange={e => setSelectedCustomer(e.target.value || null)} className="select-flex">
+                <select value={selectedCustomer || ''} onChange={e => {
+                    const val = e.target.value || null
+                    setSelectedCustomer(val)
+                    const found = (customers || []).find(c => String(c.id) === String(val))
+                    setSelectedCustomerLoyalty(found ? Number(found.loyalty_points || 0) : 0)
+                  }} className="select-flex">
                   <option value="">Walk-in / None</option>
                   {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
@@ -499,6 +515,25 @@ export default function POS() {
                   <input type="number" value={upiAmount} onChange={e => setUpiAmount(e.target.value)} />
                 </div>
                 <div className="pm-line"><div>Bill Balance</div><div className="pm-amt">{(payable - paid).toFixed(2)}</div></div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 8 }}>
+              <label style={{ display: 'block', marginBottom: 6 }}>Loyalty Points</label>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ flex: 1 }}>
+                  <div>Available: <strong>{selectedCustomerLoyalty} points</strong></div>
+                  <div style={{ fontSize: 12, color: 'var(--color-muted)' }}>You can use up to {Math.min(selectedCustomerLoyalty, Math.floor(payableBase))} points for this sale.</div>
+                </div>
+                <div style={{ width: 180 }}>
+                  <input type="number" min="0" max={selectedCustomerLoyalty} value={applyLoyaltyPoints} onChange={e => {
+                    let v = Number(e.target.value || 0)
+                    if (!Number.isFinite(v) || isNaN(v)) v = 0
+                    // clamp to available loyalty and payableBase
+                    v = Math.max(0, Math.min(v, Number(selectedCustomerLoyalty || 0), Math.floor(payableBase)))
+                    setApplyLoyaltyPoints(v)
+                  }} className="small-input" placeholder="Use points" />
+                </div>
               </div>
             </div>
 

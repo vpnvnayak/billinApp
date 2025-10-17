@@ -1,0 +1,67 @@
+name: e2e-tests
+
+on:
+  push:
+    branches: [ main, fix/* ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: billing_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+
+      - name: Run migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/billing_test
+        run: npm run migrate
+
+      - name: Start backend
+        working-directory: backend
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/billing_test
+          E2E_CLEANUP_TOKEN: ${{ secrets.E2E_CLEANUP_TOKEN }}
+        run: node src/index.js &
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Start frontend
+        working-directory: frontend
+        run: npm run dev &
+
+      - name: Install e2e deps
+        working-directory: e2e
+        run: npm ci && npx playwright install --with-deps
+
+      - name: Run Playwright tests
+        working-directory: e2e
+        env:
+          E2E_BASE_URL: http://localhost:5173
+          E2E_CLEANUP_TOKEN: ${{ secrets.E2E_CLEANUP_TOKEN }}
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/billing_test
+        run: npx playwright test --reporter=list

@@ -65,9 +65,18 @@ router.post('/', async (req, res) => {
       }
 
       const storeId = req.user && req.user.store_id ? req.user.store_id : null
+      // incorporate loyalty logic: payment_breakdown may include { loyalty_used: <points> }
+      // award: for every 100 Rs of grand total, award 1 loyalty point
+      const awardPoints = Math.floor(Number(grand || 0) / 100)
+      // loyalty_used is points the customer chooses to spend (1 point == 1 Rs)
+      const loyaltyUsed = (payment_breakdown && Number(payment_breakdown.loyalty_used)) ? Math.max(0, Math.floor(Number(payment_breakdown.loyalty_used))) : 0
+
+      // Attach loyalty info to metadata for easier audit
+      const metadataWithLoyalty = Object.assign({}, payment_breakdown || {}, { loyalty_awarded: awardPoints, loyalty_used: loyaltyUsed })
+
       const saleRes = await client.query(
         'INSERT INTO sales (user_id, subtotal, tax_total, grand_total, payment_method, metadata, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
-        [safeUserId, subtotal.toFixed(2), tax_total.toFixed(2), grand.toFixed(2), payment_method || null, payment_breakdown || null, storeId]
+        [safeUserId, subtotal.toFixed(2), tax_total.toFixed(2), grand.toFixed(2), payment_method || null, metadataWithLoyalty || null, storeId]
       )
       const saleId = saleRes.rows[0].id
 
@@ -94,7 +103,28 @@ router.post('/', async (req, res) => {
           throw e
         }
       }
-      return { status: 201, json: { id: saleId } }
+
+      // If a customer (user_id) is associated, update their loyalty points atomically
+      if (safeUserId) {
+        try {
+          // ensure customers table has loyalty_points column; fail gracefully if missing
+          const hasLoyaltyCol = schemaCache.hasColumn('customers', 'loyalty_points')
+          if (hasLoyaltyCol) {
+            // Deduct used points first (if any), then add awarded points
+            if (loyaltyUsed > 0) {
+              // decrement but not below zero
+              await client.query('UPDATE customers SET loyalty_points = GREATEST(coalesce(loyalty_points,0) - $1, 0) WHERE id = $2', [loyaltyUsed, safeUserId])
+            }
+            if (awardPoints > 0) {
+              await client.query('UPDATE customers SET loyalty_points = coalesce(loyalty_points,0) + $1 WHERE id = $2', [awardPoints, safeUserId])
+            }
+          }
+        } catch (e) {
+          console.error('Failed updating customer loyalty points', e)
+          // not fatal: continue
+        }
+      }
+      return { status: 201, json: { id: saleId, loyalty_awarded: awardPoints, loyalty_used: loyaltyUsed } }
     }, { route: 'sales.create' })
 
     if (result && result.status) {

@@ -15,6 +15,8 @@ export default defineConfig(({ command, mode }) => ({
       key: fs.readFileSync(keyFile),
     } : false,
     host: 'localhost',
-    port: 5173
+    port: 5173,
+    // fail if 5173 is busy — we want the dev server to run on 5173 only
+    strictPort: true
   }
 }))

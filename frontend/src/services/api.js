@@ -57,6 +57,7 @@ api.interceptors.response.use(
         processQueue(e, null)
         isRefreshing = false
         // clear tokens
+        console.warn('Auth refresh failed, clearing local tokens', e && (e.response && e.response.status))
         localStorage.removeItem('token')
         localStorage.removeItem('refreshToken')
         return Promise.reject(e)
