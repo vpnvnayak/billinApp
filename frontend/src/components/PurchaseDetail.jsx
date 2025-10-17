@@ -24,7 +24,7 @@ export default function PurchaseDetail({ id }) {
     return {
       product_id: '', sku: '', name: '', qty: 1, gross: 0, est_rate: 0, sp_rate: 0,
       discount_mode: 'pct', discount_pct: 0, discount_rs: 0,
-      expiry: '', tax_pct: 0, sales_tax_pct: 0, cess_pct: 0, batch: '', mrp: 0, mrp_profit_pct: 0,
+      expiry: '', tax_pct: 0, cess_pct: 0, batch: '', mrp: 0, mrp_profit_pct: 0,
       retail_price: 0, retail_profit_pct: 0, wholesale_price: 0, wholesale_profit_pct: 0, special_price: 0, sp_profit_pct: 0
     }
   }
@@ -50,7 +50,8 @@ export default function PurchaseDetail({ id }) {
         discountAmount = Number(newItem.discount_rs) || 0
       }
 
-      const taxPct = (Number(newItem.tax_pct) || 0) + (Number(newItem.sales_tax_pct) || 0) + (Number(newItem.cess_pct) || 0)
+  // Use tax_pct as the GST percentage. Do not double by adding sales_tax_pct.
+  const taxPct = (Number(newItem.tax_pct) || 0) + (Number(newItem.cess_pct) || 0)
       const taxAmount = (gross * taxPct) / 100
       const costLine = gross + taxAmount - discountAmount
       const costPerUnit = qty > 0 ? Number((costLine / qty).toFixed(2)) : Number(unit.toFixed(2))
@@ -70,7 +71,7 @@ export default function PurchaseDetail({ id }) {
         setNewItem(n => ({ ...n, mrp_profit_pct, retail_profit_pct, wholesale_profit_pct, sp_profit_pct }))
       }
     } catch (e) { console.error('Profit recalc failed', e) }
-  }, [newItem.qty, newItem.gross, newItem.est_rate, newItem.sp_rate, newItem.discount_mode, newItem.discount_pct, newItem.discount_rs, newItem.tax_pct, newItem.sales_tax_pct, newItem.cess_pct, newItem.mrp, newItem.retail_price, newItem.wholesale_price, newItem.special_price])
+  }, [newItem.qty, newItem.gross, newItem.est_rate, newItem.sp_rate, newItem.discount_mode, newItem.discount_pct, newItem.discount_rs, newItem.tax_pct, newItem.cess_pct, newItem.mrp, newItem.retail_price, newItem.wholesale_price, newItem.special_price])
 
   useEffect(() => {
     async function load() {
@@ -185,7 +186,8 @@ export default function PurchaseDetail({ id }) {
     }
   // cost price calculation per user request:
   // cost = (gross amount + tax% of gross amount) - net discount
-  const taxPct = (Number(newItem.tax_pct) || 0) + (Number(newItem.sales_tax_pct) || 0) + (Number(newItem.cess_pct) || 0)
+  // tax_pct represents GST (total). Do not add sales_tax_pct which would double-count.
+  const taxPct = (Number(newItem.tax_pct) || 0) + (Number(newItem.cess_pct) || 0)
   const afterDiscount = Number((grossLine - discountAmount).toFixed(2))
   const taxAmount = Number(((grossLine * taxPct) / 100).toFixed(2))
   const totalAmount = Number((afterDiscount + taxAmount).toFixed(2))
@@ -428,7 +430,8 @@ export default function PurchaseDetail({ id }) {
                           } else {
                             discountAmount = Number(n.discount_rs) || 0
                           }
-                          const tPct = (sel.tax_percent != null ? sel.tax_percent : (sel.taxPercent != null ? sel.taxPercent : (Number(n.tax_pct) || 0))) + (Number(n.sales_tax_pct) || 0) + (Number(n.cess_pct) || 0)
+                          // sel.tax_percent is GST. Don't add sales_tax_pct separately (avoids doubling).
+                          const tPct = (sel.tax_percent != null ? sel.tax_percent : (sel.taxPercent != null ? sel.taxPercent : (Number(n.tax_pct) || 0))) + (Number(n.cess_pct) || 0)
                           const taxAmount = (grossLine * tPct) / 100
                           const costLine = grossLine + taxAmount - discountAmount
                           const costPerUnit = qty > 0 ? Number((costLine / qty).toFixed(2)) : Number(unit.toFixed(2))
@@ -453,7 +456,7 @@ export default function PurchaseDetail({ id }) {
                             wholesale_price: sel.wholesale_price || 0,
                             special_price: sel.special_price || 0,
                             tax_pct: (sel.tax_percent != null ? sel.tax_percent : (sel.taxPercent != null ? sel.taxPercent : (Number(n.tax_pct) || 0))),
-                            sales_tax_pct: (sel.tax_percent != null ? sel.tax_percent : (sel.taxPercent != null ? sel.taxPercent : (Number(n.sales_tax_pct) || 0))),
+                            // sales_tax_pct removed — tax_pct represents GST (total).
                             mrp_profit_pct,
                             retail_profit_pct,
                             wholesale_profit_pct,
@@ -484,7 +487,8 @@ export default function PurchaseDetail({ id }) {
                           } else {
                             discountAmount = Number(n.discount_rs) || 0
                           }
-                          const tPct = (p.tax_percent != null ? p.tax_percent : (p.taxPercent != null ? p.taxPercent : (Number(n.tax_pct) || 0))) + (Number(n.sales_tax_pct) || 0) + (Number(n.cess_pct) || 0)
+                          // p.tax_percent is GST. Do not add n.sales_tax_pct which would double-count.
+                          const tPct = (p.tax_percent != null ? p.tax_percent : (p.taxPercent != null ? p.taxPercent : (Number(n.tax_pct) || 0))) + (Number(n.cess_pct) || 0)
                           const taxAmount = (grossLine * tPct) / 100
                           const costLine = grossLine + taxAmount - discountAmount
                           const costPerUnit = qty > 0 ? Number((costLine / qty).toFixed(2)) : Number(unit.toFixed(2))
@@ -499,7 +503,7 @@ export default function PurchaseDetail({ id }) {
                           const wholesale_profit_pct = wholesaleVal ? Number((((wholesaleVal - costPerUnit) / wholesaleVal) * 100).toFixed(2)) : 0
                           const sp_profit_pct = spVal ? Number((((spVal - costPerUnit) / spVal) * 100).toFixed(2)) : 0
 
-                          return ({ ...n, product_id: p.id, sku: p.sku || '', name: p.name || '', mrp: p.mrp || 0, retail_price: p.price || p.retail_price || 0, wholesale_price: p.wholesale_price || 0, special_price: p.special_price || 0, tax_pct: (p.tax_percent != null ? p.tax_percent : (p.taxPercent != null ? p.taxPercent : (Number(n.tax_pct) || 0))), sales_tax_pct: (p.tax_percent != null ? p.tax_percent : (p.taxPercent != null ? p.taxPercent : (Number(n.sales_tax_pct) || 0))), mrp_profit_pct, retail_profit_pct, wholesale_profit_pct, sp_profit_pct })
+                          return ({ ...n, product_id: p.id, sku: p.sku || '', name: p.name || '', mrp: p.mrp || 0, retail_price: p.price || p.retail_price || 0, wholesale_price: p.wholesale_price || 0, special_price: p.special_price || 0, tax_pct: (p.tax_percent != null ? p.tax_percent : (p.taxPercent != null ? p.taxPercent : (Number(n.tax_pct) || 0))), mrp_profit_pct, retail_profit_pct, wholesale_profit_pct, sp_profit_pct })
                         }); ignoreNextProductFetch.current = true; setProductSearch(p.name || ''); setProductSuggestionsVisible(false); setProductHighlightedIndex(-1) }}
                       style={{ padding: '8px 10px', cursor: 'pointer', background: productHighlightedIndex === idx ? 'var(--color-surface-2)' : 'transparent', borderBottom: '1px solid rgba(0,0,0,0.02)' }}
                     >
@@ -592,17 +596,7 @@ export default function PurchaseDetail({ id }) {
                 <option value={40}>40%</option>
               </select>
             </div>
-            <div>
-              <label className="field-label">Sales Tax (%)</label>
-              <select value={newItem.sales_tax_pct || 0} onChange={e => setNewItem(n => ({ ...n, sales_tax_pct: Number(e.target.value||0) }))}>
-                <option value={0}>0%</option>
-                <option value={5}>5%</option>
-                <option value={12}>12%</option>
-                <option value={18}>18%</option>
-                <option value={28}>28%</option>
-                <option value={40}>40%</option>
-              </select>
-            </div>
+            {/* Sales Tax removed — `tax_pct` represents GST (total). */}
             <div>
               <label className="field-label">Cess (%)</label>
               <select value={newItem.cess_pct || 0} onChange={e => setNewItem(n => ({ ...n, cess_pct: Number(e.target.value||0) }))}>
@@ -690,7 +684,7 @@ export default function PurchaseDetail({ id }) {
                     <td>₹ {Number(it.unit_price || it.est_rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                     <td>{it.gross_amount ? `₹ ${Number(it.gross_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : it.gross ? `₹ ${Number(it.gross).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '₹ 0.00'}</td>
                     <td>{it.after_discount ? `₹ ${Number(it.after_discount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : it.line_total ? `₹ ${Number(it.line_total).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '₹ 0.00'}</td>
-                    <td>{(it.tax_pct || 0) + (it.sales_tax_pct || 0)}%</td>
+                    <td>{(it.tax_pct || 0)}%</td>
                     <td>{it.cess_pct ? `${it.cess_pct}%` : '0%'}</td>
                     <td>{it.total_amount ? `₹ ${Number(it.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : `₹ ${Number(it.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}</td>
                     <td style={{ display: 'flex', gap: 8 }}>

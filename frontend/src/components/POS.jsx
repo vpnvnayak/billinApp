@@ -197,17 +197,24 @@ export default function POS() {
 
   // Totals
   function computeTotals() {
+    // Items in cart show price inclusive of tax. Compute exclusive subtotal and tax total.
     let subtotal = 0
     let tax_total = 0
+    let grand = 0
     for (const it of cart) {
       const qty = Number(it.qty) || 0
-      const price = Number(it.price) || 0
-      const line = qty * price
-      subtotal += line
-      const tax = (Number(it.tax_percent) || 0) / 100.0
-      tax_total += line * tax
+      const priceInclusive = Number(it.price) || 0
+      const taxRate = (Number(it.tax_percent) || 0) / 100.0
+      // exclusive price per unit = inclusive / (1 + taxRate)
+      const unitExclusive = taxRate > 0 ? (priceInclusive / (1 + taxRate)) : priceInclusive
+      const lineExclusive = qty * unitExclusive
+      const lineTax = qty * (priceInclusive - unitExclusive)
+      const lineInclusive = qty * priceInclusive
+      subtotal += lineExclusive
+      tax_total += lineTax
+      grand += lineInclusive
     }
-    const grand = subtotal + tax_total
+    // grand should equal subtotal + tax_total (allow minor rounding drift)
     return { subtotal, tax_total, grand }
   }
 
@@ -236,8 +243,14 @@ export default function POS() {
       return n
     }
 
+    // Send prices exclusive of tax to backend (backend expects price per unit before tax)
     const payload = {
-      items: cart.map(it => ({ product_id: safeInt32(it.id), sku: it.sku, name: it.name, qty: it.qty, price: it.price, tax_percent: it.tax_percent })),
+      items: cart.map(it => {
+        const taxRate = (Number(it.tax_percent) || 0) / 100.0
+        const priceInclusive = Number(it.price) || 0
+        const unitExclusive = taxRate > 0 ? (priceInclusive / (1 + taxRate)) : priceInclusive
+        return ({ product_id: safeInt32(it.id), sku: it.sku, name: it.name, qty: it.qty, price: Number(unitExclusive.toFixed(2)), tax_percent: it.tax_percent })
+      }),
       payment_method: payMethod,
       payment_breakdown: { card: Number(cardAmount)||0, cash: Number(cashGiven)||0, upi: Number(upiAmount)||0, discount_percent: Number(discountPercent)||0, discount_rs: Number(discountRs)||0, loyalty_used: Number(applyLoyaltyPoints)||0, remarks: remarks || '' },
       user_id: selectedCustomer || null
@@ -279,43 +292,57 @@ export default function POS() {
   }
 
   function buildReceiptHtml(sale, items, pb) {
-    // compute totals from provided items (don't rely on current cart)
-    let subtotal = 0
-    let tax_total = 0
+    // Compute totals with high precision and round only final totals for display.
+    // Items passed to this function are expected to contain exclusive (pre-tax) unit prices.
+    let subtotalExact = 0.0 // rupees, not rounded
+    let taxExact = 0.0 // rupees, not rounded
     for (const it of items || []) {
       const qty = Number(it.qty) || 0
-      const price = Number(it.price) || 0
-      const line = qty * price
-      subtotal += line
-      const tax = (Number(it.tax_percent) || 0) / 100.0
-      tax_total += line * tax
+      const taxPct = (Number(it.tax_percent) || 0) / 100.0
+      const priceExclusive = Number(it.price) || 0
+      const lineExclusive = qty * priceExclusive
+      const lineTax = lineExclusive * taxPct
+      subtotalExact += lineExclusive
+      taxExact += lineTax
     }
-    const t = { subtotal, tax_total, grand: subtotal + tax_total }
-    // simple A3 stylesheet and layout
-    const rows = items.map((it, i) => {
-      const price = Number(it.price) || 0
-      const line = (Number(it.qty)||0) * price
-      return `<tr><td>${i+1}</td><td>${it.sku||''}</td><td>${it.name}</td><td>${it.qty}</td><td>${formatCurrency(price)}</td><td>${formatCurrency(line)}</td></tr>`
+    // round totals only once for presentation
+    const subtotal = Math.round(subtotalExact * 100) / 100
+    const tax_total = Math.round(taxExact * 100) / 100
+    const grand = Math.round((subtotalExact + taxExact) * 100) / 100
+
+    // build rows showing per-line price as tax-inclusive unit rate (matches UI). Display values are rounded for readability.
+    const rows = (items || []).map((it, i) => {
+      const qty = Number(it.qty) || 0
+      const taxPct = (Number(it.tax_percent) || 0) / 100.0
+      const priceExclusive = Number(it.price) || 0
+      const priceInclusiveUnit = priceExclusive * (1 + taxPct)
+      const lineInclusive = qty * priceInclusiveUnit
+      return `<tr><td>${i+1}</td><td>${it.sku||''}</td><td>${it.name}</td><td>${it.qty}</td><td>${formatCurrency(priceInclusiveUnit)}</td><td>${formatCurrency(lineInclusive)}</td></tr>`
     }).join('')
+
     const paymentLines = Object.entries(pb || {}).map(([k,v]) => `<div><strong>${k}</strong>: ${typeof v === 'number' ? formatCurrency(v) : v}</div>`).join('')
-    return `<!doctype html><html><head><meta charset="utf-8"><title>Receipt</title><style>@page{size:A3 landscape;margin:20mm}body{font-family:Arial,sans-serif;color:#111}h1{font-size:20px}table{width:100%;border-collapse:collapse}th,td{padding:6px;border-bottom:1px solid #ddd;text-align:left}tfoot td{font-weight:700} .right{text-align:right}</style></head><body><h1>Receipt - Sale ${sale.id}</h1><div>${new Date().toLocaleString()}</div><table><thead><tr><th>#</th><th>SKU</th><th>Item</th><th>Qty</th><th>Price</th><th class="right">Line Total</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="5">Subtotal</td><td class="right">${t.subtotal.toFixed(2)}</td></tr><tr><td colspan="5">Tax</td><td class="right">${t.tax_total.toFixed(2)}</td></tr><tr><td colspan="5">Grand Total</td><td class="right">${t.grand.toFixed(2)}</td></tr></tfoot></table><h3>Payment</h3>${paymentLines}<div style="margin-top:20px">Thank you for your purchase.</div></body></html>`
+
+    // display grand as integer ceiling to match POS rounded display
+    const grandRounded = Math.ceil(Number(grand) || 0)
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Receipt</title><style>@page{size:A3 landscape;margin:20mm}body{font-family:Arial,sans-serif;color:#111}h1{font-size:20px}table{width:100%;border-collapse:collapse}th,td{padding:6px;border-bottom:1px solid #ddd;text-align:left}tfoot td{font-weight:700} .right{text-align:right}</style></head><body><h1>Receipt - Sale ${sale.id}</h1><div>${new Date().toLocaleString()}</div><table><thead><tr><th>#</th><th>SKU</th><th>Item</th><th>Qty</th><th>Price</th><th class="right">Line Total</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><td colspan="5">Subtotal</td><td class="right">${subtotal.toFixed(2)}</td></tr><tr><td colspan="5">Tax</td><td class="right">${tax_total.toFixed(2)}</td></tr><tr><td colspan="5">Grand Total</td><td class="right">${grandRounded}.00</td></tr></tfoot></table><h3>Payment</h3>${paymentLines}<div style="margin-top:20px">Thank you for your purchase.</div></body></html>`
   }
 
   function buildThermalReceiptHtml(sale, items, pb) {
     // compute totals from provided items (so printing works independently of cart)
-    let subtotalNum = 0
-    let tax_totalNum = 0
+    // Use high-precision accumulation and round only final totals for display.
+    let subtotalExact = 0.0
+    let taxExact = 0.0
     for (const it of items || []) {
       const qty = Number(it.qty) || 0
-      const price = Number(it.price) || 0
-      const line = qty * price
-      subtotalNum += line
+      const priceExclusive = Number(it.price) || 0
       const tax = (Number(it.tax_percent) || 0) / 100.0
-      tax_totalNum += line * tax
+      const lineExclusive = qty * priceExclusive
+      subtotalExact += lineExclusive
+      taxExact += lineExclusive * tax
     }
-  const subtotal = subtotalNum
-  const tax_total = tax_totalNum
-  const grand = subtotalNum + tax_totalNum
+  const subtotal = Math.round(subtotalExact * 100) / 100
+  const tax_total = Math.round(taxExact * 100) / 100
+  const grand = Math.round((subtotalExact + taxExact) * 100) / 100
     const now = new Date()
     const invoiceNo = sale.id || ''
     const dateStr = now.toLocaleDateString()
@@ -325,9 +352,12 @@ export default function POS() {
       const name = (it.name || '').toUpperCase()
       const mrp = it.mrp != null ? Number(it.mrp) : ''
       const qty = Number(it.qty||0)
-      const rate = Number(it.price||0)
-      const total = qty * rate
-      return `<tr><td style="font-weight:700">${name}</td></tr><tr><td>${mrp ? formatCurrency(mrp) : ''} &nbsp; ${qty} x ${formatCurrency(rate, { minimumFractionDigits:0, maximumFractionDigits:0 })} &nbsp; ${formatCurrency(total, { minimumFractionDigits:0, maximumFractionDigits:0 })}</td></tr>`
+      const priceExclusive = Number(it.price||0)
+      const taxPct = (Number(it.tax_percent) || 0) / 100.0
+      // display per-line as tax-inclusive unit rate to match UI
+      const rateInclusive = priceExclusive * (1 + taxPct)
+      const totalInclusive = qty * rateInclusive
+      return `<tr><td style="font-weight:700">${name}</td></tr><tr><td>${mrp ? formatCurrency(mrp) : ''} &nbsp; ${qty} x ${formatCurrency(rateInclusive, { minimumFractionDigits:0, maximumFractionDigits:0 })} &nbsp; ${formatCurrency(totalInclusive, { minimumFractionDigits:0, maximumFractionDigits:0 })}</td></tr>`
     }).join('')
 
   const card = (pb && pb.card) ? Number(pb.card) : 0
@@ -374,9 +404,9 @@ export default function POS() {
         <tr><td>SGST</td><td class="right">${formatCurrency(Number(tax_total)/2)}</td></tr>
       </table>
       <div class="sep"></div>
-  <div>Old Balance <span class="right">${formatCurrency(0)}</span></div>
-  <div>Sales <span class="right">${formatCurrency(grand)}</span></div>
-  <div>Cash Received <span class="right">${formatCurrency(cash)}</span></div>
+      <div>Old Balance <span class="right">${formatCurrency(0)}</span></div>
+      <div>Sales <span class="right">${formatCurrency(Math.ceil(Number(grand) || 0))}</span></div>
+      <div>Cash Received <span class="right">${formatCurrency(cash)}</span></div>
       <div class="sep"></div>
       <div class="center b">THANK YOU VISIT AGAIN</div>
     </body></html>`
@@ -385,7 +415,10 @@ export default function POS() {
   // no mock add helper — use real products via search
 
   const totals = computeTotals()
+  // totals.grand is computed as inclusive grand total (may be fractional). We display and use a rounded-up
+  // integer value for Grand Total and Payable as requested by product.
   const totalAmount = totals.grand
+  const totalAmountRounded = Math.ceil(Number(totalAmount) || 0)
   const dp = Number(discountPercent) || 0
   const calcDiscountRs = (dp/100) * totalAmount
   const drs = Number(discountRs) || calcDiscountRs || 0
@@ -393,7 +426,10 @@ export default function POS() {
   const requestedLoyalty = Math.max(0, Number(applyLoyaltyPoints) || 0)
   const usableLoyalty = Math.max(0, Math.min(requestedLoyalty, Number(selectedCustomerLoyalty || 0)))
   const payableBase = Math.max(0, totalAmount - drs)
-  const payable = Math.max(0, payableBase - usableLoyalty)
+  // Payable should be rounded up to the next integer after applying discounts but before applying loyalty
+  // then loyalty is subtracted and final payable is rounded up as well to an integer to match UI behavior.
+  const payableBaseRounded = Math.ceil(payableBase)
+  const payable = Math.max(0, Math.ceil(payableBaseRounded - usableLoyalty))
   const paid = (Number(cardAmount) || 0) + (Number(upiAmount) || 0) + (Number(cashGiven) || 0)
   const balanceToBePaid = Math.max(0, payable - paid)
   const changeDue = Math.max(0, paid - payable)
@@ -472,9 +508,9 @@ export default function POS() {
               {cart.length === 0 && <div>No items</div>}
               {cart.length > 0 && (
                 <div>
-                  <div>Subtotal: <strong>{totals.subtotal.toFixed(2)}</strong></div>
-                  <div>Tax: <strong>{totals.tax_total.toFixed(2)}</strong></div>
-                  <div style={{ marginTop: 8, fontSize: 18 }}>Grand Total: <strong>{totals.grand.toFixed(2)}</strong></div>
+              <div>Subtotal (excl. tax): <strong>{totals.subtotal.toFixed(2)}</strong></div>
+              <div>Tax: <strong>{totals.tax_total.toFixed(2)}</strong></div>
+              <div style={{ marginTop: 8, fontSize: 18 }}>Grand Total (incl. tax): <strong>{totalAmountRounded}.00</strong></div>
                   <div style={{ marginTop: 12 }}>
                     <button className="btn" onClick={() => setShowPay(true)}>Pay</button>
                   </div>
@@ -496,10 +532,10 @@ export default function POS() {
 
             <div className="pm-grid">
               <div className="pm-left">
-                <div className="pm-total"><div>Total Amount</div><div className="pm-amt">{totalAmount.toFixed(2)}</div></div>
+                <div className="pm-total"><div>Total Amount (incl. tax)</div><div className="pm-amt">{totalAmountRounded}.00</div></div>
                 <div className="pm-line discount-row"><div>Cash Discount %</div><div className="discount-controls"><input type="number" value={discountPercent} onChange={e => setDiscountPercent(e.target.value)} className="small-input" /><input type="number" value={discountRs} onChange={e => setDiscountRs(e.target.value)} className="small-input" placeholder="Rs" /></div></div>
                 <div className="pm-line"><div>Loyalty</div><div><input type="number" value={loyalty} onChange={e => setLoyalty(e.target.value)} className="small-input" /></div></div>
-                <div className="pm-line strong"><div>Payable Amount</div><div className="pm-amt">{payable.toFixed(2)}</div></div>
+                <div className="pm-line strong"><div>Payable Amount</div><div className="pm-amt">{payable}.00</div></div>
               </div>
               <div className="pm-right">
                 <div className="pm-paymethod">
@@ -538,7 +574,7 @@ export default function POS() {
             </div>
 
             <div className="pm-footer">
-              <div>
+                <div>
                 {changeDue > 0 ? <div>Change Due <span className="pm-change">{changeDue.toFixed(2)}</span></div> : null}
                 <div>Balance Amount To Be Paid <span className="pm-balance">{balanceToBePaid.toFixed(2)}</span></div>
               </div>
