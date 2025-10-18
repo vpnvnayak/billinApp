@@ -45,7 +45,7 @@ describe('concurrent sales oversell protection', () => {
     const success = results.filter(r => r.status === 201)
     const failed = results.filter(r => r.status !== 201)
 
-    console.log('concurrency test: successes', success.length, 'failures', failed.length)
+  // debug logging removed: rely on assertions for test results
 
     // total successes should be <= initialStock
     expect(success.length).toBeLessThanOrEqual(initialStock)
