@@ -52,6 +52,7 @@ router.post('/', async (req, res) => {
   try {
   const { name, phone, email, loyalty_points } = req.body || {}
     if (!name || typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name is required' })
+    if (!phone || typeof phone !== 'string' || !phone.trim()) return res.status(400).json({ error: 'phone is required' })
     if (!process.env.DATABASE_URL) {
       return res.status(201).json({ id: Date.now(), name, phone: phone || null, email: email || null })
     }

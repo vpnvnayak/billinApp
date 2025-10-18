@@ -28,7 +28,7 @@ describe('loyalty: award and spend points', () => {
     created.products.push(prodId)
 
     // create a customer with initial loyalty points = 5
-    const customerResp = await request(app).post('/api/customers').send({ name: `Loyal Cust ${uniq()}`, loyalty_points: 5 })
+  const customerResp = await request(app).post('/api/customers').send({ name: `Loyal Cust ${uniq()}`, phone: `9${Math.floor(Math.random()*900000000)+100000000}`, loyalty_points: 5 })
     expect(customerResp.status).toBe(201)
     const custId = customerResp.body.id
     created.customers.push(custId)
@@ -60,7 +60,7 @@ describe('loyalty: award and spend points', () => {
     created.products.push(prodId)
 
     // create a customer with initial loyalty points = 2
-    const customerResp = await request(app).post('/api/customers').send({ name: `Loyal Cust Over ${uniq()}`, loyalty_points: 2 })
+  const customerResp = await request(app).post('/api/customers').send({ name: `Loyal Cust Over ${uniq()}`, phone: `9${Math.floor(Math.random()*900000000)+100000000}`, loyalty_points: 2 })
     expect(customerResp.status).toBe(201)
     const custId = customerResp.body.id
     created.customers.push(custId)
@@ -90,7 +90,7 @@ describe('loyalty: award and spend points', () => {
     const prodId = p.rows[0].id
     created.products.push(prodId)
 
-    const customerResp = await request(app).post('/api/customers').send({ name: `Loyal Cust100 ${uniq()}`, loyalty_points: 0 })
+  const customerResp = await request(app).post('/api/customers').send({ name: `Loyal Cust100 ${uniq()}`, phone: `9${Math.floor(Math.random()*900000000)+100000000}`, loyalty_points: 0 })
     expect(customerResp.status).toBe(201)
     const custId = customerResp.body.id
     created.customers.push(custId)
@@ -112,7 +112,7 @@ describe('loyalty: award and spend points', () => {
     const prodId = p.rows[0].id
     created.products.push(prodId)
 
-    const customerResp = await request(app).post('/api/customers').send({ name: `Loyal CustMulti ${uniq()}`, loyalty_points: 0 })
+  const customerResp = await request(app).post('/api/customers').send({ name: `Loyal CustMulti ${uniq()}`, phone: `9${Math.floor(Math.random()*900000000)+100000000}`, loyalty_points: 0 })
     expect(customerResp.status).toBe(201)
     const custId = customerResp.body.id
     created.customers.push(custId)

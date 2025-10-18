@@ -11,16 +11,38 @@ export default function POS() {
   }
   const [query, setQuery] = useState('')
   const [customers, setCustomers] = useState([])
+  const [customerQuery, setCustomerQuery] = useState('')
+  const [customerSuggestions, setCustomerSuggestions] = useState([])
   const [selectedCustomer, setSelectedCustomer] = useState(null)
   const [selectedCustomerLoyalty, setSelectedCustomerLoyalty] = useState(0)
   const [showCreateCustomer, setShowCreateCustomer] = useState(false)
   const [newCustomerName, setNewCustomerName] = useState('')
+  const [newCustomerPhone, setNewCustomerPhone] = useState('')
+  const [newCustomerEmail, setNewCustomerEmail] = useState('')
   const [cart, setCart] = useState([])
   const [results, setResults] = useState([])
+  // when multiple products share the same SKU we show a single group and
+  // prompt cashier to enter/select MRP. mrpPrompt = { group: [...products], sku, value }
+  const [mrpPrompt, setMrpPrompt] = useState(null)
   const [loading, setLoading] = useState(false)
   const [selectedIndex, setSelectedIndex] = useState(-1)
   const inputRef = useRef()
   const timer = useRef()
+  const customerTimer = useRef()
+  const customerSuppressRef = useRef(false)
+  const mrpInputRef = useRef()
+
+  // derive grouped results (one entry per SKU) for display
+  const displayResults = (() => {
+    if (!results || results.length === 0) return []
+    const m = new Map()
+    for (const r of results) {
+      const key = String(r.sku || '').toLowerCase()
+      if (!m.has(key)) m.set(key, [])
+      m.get(key).push(r)
+    }
+    return Array.from(m.values()).map(group => ({ item: group[0], group }))
+  })()
 
   useEffect(() => {
     if (!query) { setResults([]); setSelectedIndex(-1); return }
@@ -42,14 +64,24 @@ export default function POS() {
   useEffect(() => {
     function onKey(e) {
       if (document.activeElement === inputRef.current) {
-        if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex(i => Math.min((results.length || 0) - 1, Math.max(0, i + 1))) }
+        if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex(i => Math.min((displayResults.length || 0) - 1, Math.max(0, i + 1))) }
         if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex(i => Math.max(0, i - 1)) }
-        if (e.key === 'Enter') { e.preventDefault(); if (selectedIndex >= 0 && results[selectedIndex]) addProduct(results[selectedIndex]) }
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          if (selectedIndex >= 0 && displayResults[selectedIndex]) {
+            const dr = displayResults[selectedIndex]
+            if (dr.group && dr.group.length > 1) {
+              setMrpPrompt({ group: dr.group, sku: String(dr.item.sku || ''), value: '' })
+            } else {
+              addProduct(dr.item)
+            }
+          }
+        }
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [results, selectedIndex])
+  }, [displayResults, selectedIndex])
 
   // when user presses Enter in the barcode input (scanner sends Enter),
   // immediately try to add the matched product. Debounce used for live search
@@ -72,9 +104,14 @@ export default function POS() {
       const items = r.data || []
       setResults(items)
       if (items.length > 0) {
-        // prefer exact sku match if present
-        const exact = items.find(it => String(it.sku || '').toLowerCase() === q.toLowerCase()) || items[0]
-        addProduct(exact)
+        const exactKey = q.toLowerCase()
+        const matched = items.filter(it => String(it.sku || '').toLowerCase() === exactKey)
+        if (matched.length > 1) {
+          setMrpPrompt({ group: matched, sku: q, value: '' })
+        } else {
+          const exact = matched[0] || items[0]
+          addProduct(exact)
+        }
       } else {
         import('../services/ui').then(m => m.showSnackbar('Product not found'))
       }
@@ -124,10 +161,52 @@ export default function POS() {
     }
   }, [])
 
+  // compute suggestions for customer search (filter by phone or name)
+  useEffect(() => {
+    // debounce and call server for customer search
+    clearTimeout(customerTimer.current)
+    const q = (customerQuery || '').trim()
+    // do not show suggestions if suppressed (user just selected) until they type again
+    if (customerSuppressRef.current) {
+      setCustomerSuggestions([])
+      return
+    }
+    // require minimum 3 characters to trigger suggestions
+    if (!q || q.length < 3) {
+      setCustomerSuggestions([])
+      return
+    }
+    customerTimer.current = setTimeout(async () => {
+      try {
+        const r = await api.get('/customers', { params: { q, limit: 20 } })
+        const data = (r.data && (Array.isArray(r.data.data) ? r.data.data : r.data)) || []
+        setCustomerSuggestions(data)
+      } catch (e) {
+        console.error('customer search failed', e)
+        // fallback to client-side filter
+        const qq = q.toLowerCase()
+        const matches = (customers || []).filter(c => {
+          const name = (c.name || '').toLowerCase()
+          const phone = (c.phone || '').toLowerCase()
+          return name.includes(qq) || phone.includes(qq) || String(c.id) === qq
+        }).slice(0, 20)
+        setCustomerSuggestions(matches)
+      }
+    }, 250)
+    return () => clearTimeout(customerTimer.current)
+  }, [customerQuery, customers])
+
   // autofocus barcode input when POS mounts
   useEffect(() => {
     try { inputRef.current && inputRef.current.focus() } catch (e) {}
   }, [])
+
+  // autofocus MRP input when prompt opens
+  useEffect(() => {
+    if (mrpPrompt && mrpInputRef && mrpInputRef.current) {
+      try { mrpInputRef.current.focus() } catch (e) {}
+    }
+  }, [mrpPrompt])
 
   // expose print helpers so other pages (Sales) can invoke printing
   useEffect(() => {
@@ -179,15 +258,21 @@ export default function POS() {
   }
 
   // Create a local customer (temporary, client-side). In a real app you'd POST to /customers.
-  async function createCustomer(name) {
-    if (!name || !name.trim()) return
+  async function createCustomer(name, phone, email) {
+    // allow calling without args (use state)
+    const nm = (name !== undefined) ? name : newCustomerName
+    const ph = (phone !== undefined) ? phone : newCustomerPhone
+    const em = (email !== undefined) ? email : newCustomerEmail
+    if (!nm || !nm.trim()) return
     try {
-      const r = await api.post('/customers', { name: name.trim() })
-  // ensure list updated and select newly created
-  setCustomers(s => Array.isArray(s) ? [r.data, ...s] : [r.data])
+      const r = await api.post('/customers', { name: nm.trim(), phone: ph || null, email: em || null })
+      // ensure list updated and select newly created
+      setCustomers(s => Array.isArray(s) ? [r.data, ...s] : [r.data])
       setSelectedCustomer(r.data.id)
       setShowCreateCustomer(false)
       setNewCustomerName('')
+      setNewCustomerPhone('')
+      setNewCustomerEmail('')
       try { window.dispatchEvent(new CustomEvent('customers:changed')) } catch (e) {}
     } catch (e) {
       console.error('create customer failed', e)
@@ -441,12 +526,15 @@ export default function POS() {
           <input ref={inputRef} placeholder="Search barcode" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={handleInputKeyDown} />
           <button className="icon"><MagnifyingGlassIcon style={{ width: 18, height: 18 }} /></button>
           {loading && <div className="pos-search-loading">…</div>}
-          {results.length > 0 && (
+          {displayResults.length > 0 && (
             <div className="pos-results">
-              {results.map((r, idx) => (
-                <div key={r.id} className={`pos-result ${idx === selectedIndex ? 'selected' : ''}`} onClick={() => addProduct(r)}>
-                  <div className="r-sku">{r.sku}</div>
-                  <div className="r-name">{r.name}</div>
+              {displayResults.map((dr, idx) => (
+                <div key={(dr.item && dr.item.sku) || idx} className={`pos-result ${idx === selectedIndex ? 'selected' : ''}`} onClick={() => {
+                    if (dr.group && dr.group.length > 1) setMrpPrompt({ group: dr.group, sku: String(dr.item.sku||''), value: '' })
+                    else addProduct(dr.item)
+                  }}>
+                  <div className="r-sku">{dr.item.sku}</div>
+                  <div className="r-name">{dr.item.name}{dr.group && dr.group.length > 1 ? ` (${dr.group.length} MRPs)` : ''}</div>
                 </div>
               ))}
             </div>
@@ -490,15 +578,44 @@ export default function POS() {
             <div style={{ marginBottom: 12 }}>
               <label style={{ display: 'block', marginBottom: 6, color: 'var(--color-muted)' }}>Customer</label>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <select value={selectedCustomer || ''} onChange={e => {
-                    const val = e.target.value || null
-                    setSelectedCustomer(val)
-                    const found = (customers || []).find(c => String(c.id) === String(val))
-                    setSelectedCustomerLoyalty(found ? Number(found.loyalty_points || 0) : 0)
-                  }} className="select-flex">
-                  <option value="">Walk-in / None</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <div style={{ position: 'relative', flex: 1 }}>
+                  <input
+                    placeholder="Customer (search name or phone)"
+                    value={customerQuery}
+                    onChange={e => {
+                      const v = e.target.value
+                      // clear any suppress flag when user edits
+                      customerSuppressRef.current = false
+                      setCustomerQuery(v)
+                    }}
+                    className="select-flex"
+                  />
+                  {/* suggestions dropdown */}
+                  {customerSuggestions && customerSuggestions.length > 0 && (
+                    <div className="pos-customer-suggestions" style={{ position: 'absolute', zIndex: 40, background: '#fff', boxShadow: '0 2px 6px rgba(0,0,0,0.15)', width: '100%', maxHeight: 260, overflow: 'auto' }}>
+                      <div key="none" className="pos-customer-suggestion" style={{ padding: 8, cursor: 'pointer' }} onMouseDown={() => {
+                        customerSuppressRef.current = true
+                        setSelectedCustomer(null)
+                        setSelectedCustomerLoyalty(0)
+                        setCustomerQuery('')
+                        setCustomerSuggestions([])
+                      }}>Walk-in / None</div>
+                      {customerSuggestions.map(c => (
+                        <div key={c.id} className="pos-customer-suggestion" style={{ padding: 8, cursor: 'pointer', borderTop: '1px solid #eee' }} onMouseDown={() => {
+                          // suppress further suggestions until user types
+                          customerSuppressRef.current = true
+                          setSelectedCustomer(c.id)
+                          setSelectedCustomerLoyalty(Number(c.loyalty_points || 0))
+                          setCustomerQuery(`${c.name || ''}${c.phone ? ' (' + c.phone + ')' : ''}`)
+                          setCustomerSuggestions([])
+                        }}>
+                          <div style={{ fontWeight: 600 }}>{c.name || 'Unnamed'}</div>
+                          <div style={{ fontSize: 12, color: 'var(--color-muted)' }}>{c.phone || ''}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <button className="btn btn-ghost" onClick={() => setShowCreateCustomer(true)}>Create</button>
               </div>
             </div>
@@ -587,6 +704,54 @@ export default function POS() {
         </div>
       )}
 
+      {mrpPrompt && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3>Enter MRP for {mrpPrompt.sku}</h3>
+            <div style={{ marginBottom: 8 }}>
+              <label>Enter MRP</label>
+              <input ref={mrpInputRef} type="text" inputMode="numeric" value={mrpPrompt.value} onChange={e => setMrpPrompt(s => ({ ...s, value: e.target.value, error: null }))} onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  const valRaw = mrpPrompt.value == null ? '' : String(mrpPrompt.value)
+                  const val = valRaw.replace(/,/g, '').trim()
+                  if (!val) { setMrpPrompt(s => ({ ...s, error: 'Enter MRP' })); return }
+                  const match = mrpPrompt.group.find(p => {
+                    const pm = p.mrp == null ? '' : String(p.mrp).replace(/,/g, '').trim()
+                    return pm !== '' && pm === val
+                  })
+                  if (match) {
+                    addProduct(match)
+                    setMrpPrompt(null)
+                  } else {
+                    setMrpPrompt(s => ({ ...s, error: 'No product with matching MRP found' }))
+                  }
+                }
+              }} />
+              {mrpPrompt.error ? <div style={{ color: 'var(--color-danger)', marginTop: 6 }}>{mrpPrompt.error}</div> : null}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn" onClick={() => {
+                const valRaw = mrpPrompt.value == null ? '' : String(mrpPrompt.value)
+                const val = valRaw.replace(/,/g, '').trim()
+                if (!val) { setMrpPrompt(s => ({ ...s, error: 'Enter MRP' })); return }
+                const match = mrpPrompt.group.find(p => {
+                  const pm = p.mrp == null ? '' : String(p.mrp).replace(/,/g, '').trim()
+                  return pm !== '' && pm === val
+                })
+                if (match) {
+                  addProduct(match)
+                  setMrpPrompt(null)
+                } else {
+                  setMrpPrompt(s => ({ ...s, error: 'No product with matching MRP found' }))
+                }
+              }}>OK</button>
+              <button className="btn btn-ghost" onClick={() => setMrpPrompt(null)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCreateCustomer && (
         <div className="modal-overlay">
           <div className="modal">
@@ -595,8 +760,17 @@ export default function POS() {
               <label className="field-label">Name</label>
               <input type="text" value={newCustomerName} onChange={e => setNewCustomerName(e.target.value)} />
             </div>
+            <div className="field">
+              <label className="field-label">Phone <span style={{ color: 'var(--color-danger)' }}>*</span></label>
+              <input type="tel" value={newCustomerPhone} onChange={e => setNewCustomerPhone(e.target.value)} placeholder="Required" />
+              {!newCustomerPhone || !String(newCustomerPhone).trim() ? <div style={{ color: 'var(--color-danger)', marginTop: 6 }}>Phone is required</div> : null}
+            </div>
+            <div className="field">
+              <label className="field-label">Email</label>
+              <input type="email" value={newCustomerEmail} onChange={e => setNewCustomerEmail(e.target.value)} placeholder="Optional" />
+            </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-              <button className="btn" onClick={() => createCustomer(newCustomerName)}>Create</button>
+              <button className="btn" onClick={() => createCustomer()} disabled={!newCustomerName || !newCustomerName.trim() || !newCustomerPhone || !String(newCustomerPhone).trim()}>Create</button>
               <button className="btn btn-ghost" onClick={() => { setShowCreateCustomer(false); setNewCustomerName('') }}>Close</button>
             </div>
           </div>

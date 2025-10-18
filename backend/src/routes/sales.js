@@ -31,23 +31,52 @@ router.post('/', async (req, res) => {
   // Use transaction helper to centralize BEGIN/COMMIT/ROLLBACK/release and metrics
   try {
     const result = await tx.runTransaction(async (client) => {
-      // Check stock for each item and decrement where product_id is a valid integer
+      // Check stock for each item and decrement where product_id is a valid integer.
+      // Prefer product_variants when present: lock variant rows and decrement across variants.
       for (const it of items) {
         const pid = v.isValidInt32(it.product_id) ? Number(it.product_id) : null
         if (!pid) {
           // Skip stock enforcement for items without a valid integer product_id
           continue
         }
-        const r = await client.query('SELECT stock FROM products WHERE id = $1 FOR UPDATE', [pid])
-        if (r.rows.length === 0) {
-          return { status: 400, json: { error: `product not found ${pid}` } }
-        }
-        const stock = Number(r.rows[0].stock || 0)
         const qty = Number(it.qty || 0)
-        if (stock < qty) {
-          return { status: 400, json: { error: `insufficient stock for product ${pid}` } }
+
+        // Try to find variants for this product and lock them
+        let vrows
+        try {
+          vrows = await client.query('SELECT id, stock FROM product_variants WHERE product_id = $1 FOR UPDATE', [pid])
+        } catch (e) {
+          vrows = { rows: [] }
         }
-        await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2', [qty, pid])
+
+        if (vrows.rows && vrows.rows.length > 0) {
+          // sum available stock across variants
+          const total = vrows.rows.reduce((s, r) => s + Number(r.stock || 0), 0)
+          if (total < qty) {
+            return { status: 400, json: { error: `insufficient stock for product ${pid}` } }
+          }
+          // decrement across variants in id order until qty consumed
+          let remaining = qty
+          for (const vr of vrows.rows) {
+            if (remaining <= 0) break
+            const avail = Number(vr.stock || 0)
+            if (avail <= 0) continue
+            const take = Math.min(avail, remaining)
+            await client.query('UPDATE product_variants SET stock = GREATEST(0, stock - $1) WHERE id = $2', [take, vr.id])
+            remaining -= take
+          }
+        } else {
+          // fallback to product-level stock
+          const r = await client.query('SELECT stock FROM products WHERE id = $1 FOR UPDATE', [pid])
+          if (r.rows.length === 0) {
+            return { status: 400, json: { error: `product not found ${pid}` } }
+          }
+          const stock = Number(r.rows[0].stock || 0)
+          if (stock < qty) {
+            return { status: 400, json: { error: `insufficient stock for product ${pid}` } }
+          }
+          await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2', [qty, pid])
+        }
       }
 
       // Compute totals

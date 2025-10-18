@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 const v = require('../validators')
+const schemaCache = require('../schemaCache')
 // optionalAuth middleware will populate req.user when a valid Bearer token is present
 
 // GET /api/products - list products (with optional server-side pagination)
@@ -122,11 +123,46 @@ router.post('/', async (req, res) => {
   const storeIdForInsert = req.user && req.user.store_id ? req.user.store_id : null
     const stockVal = Number(stock) || 0
     const taxVal = Number(tax_percent) || 0
+    // Ensure SKU+MRP pair is unique within the store (or globally when not scoped). Use case-insensitive SKU match
+    // and exact MRP match (including NULL) — i.e., don't allow creating another product with same SKU and same MRP.
+    if (sku && sku.toString().trim()) {
+      const skuVal = sku.toString().trim()
+      const mrpVal = mrp !== undefined ? mrp : null
+      let dup
+      if (storeIdForInsert) {
+        dup = await db.query('SELECT id FROM products WHERE LOWER(sku) = LOWER($1) AND mrp IS NOT DISTINCT FROM $2 AND store_id = $3', [skuVal, mrpVal, storeIdForInsert])
+      } else {
+        dup = await db.query('SELECT id FROM products WHERE LOWER(sku) = LOWER($1) AND mrp IS NOT DISTINCT FROM $2', [skuVal, mrpVal])
+      }
+      if (dup.rows.length > 0) return res.status(400).json({ error: 'SKU/barcode with same MRP already exists' })
+    }
     const result = await db.query(
       'INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, sku, name, price, mrp, unit, tax_percent, stock',
       [sku || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, storeIdForInsert]
     )
     res.status(201).json(result.rows[0])
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// GET /api/products/:id/variants - return product_variants for a product if available
+router.get('/:id/variants', async (req, res) => {
+  const { id } = req.params
+  if (!Number.isInteger(Number(id))) return res.status(400).json({ error: 'invalid id' })
+  try {
+    if (!process.env.DATABASE_URL) return res.json([])
+    const hasVariants = schemaCache.hasColumn('product_variants', 'id')
+    if (!hasVariants) return res.json([])
+    const storeId = req.user && req.user.store_id ? req.user.store_id : null
+    // Ensure product belongs to store when scoped
+    if (storeId) {
+      const p = await db.query('SELECT id FROM products WHERE id = $1 AND store_id = $2', [id, storeId])
+      if (p.rows.length === 0) return res.status(404).json({ error: 'not found' })
+    }
+    const q = await db.query('SELECT id, product_id, mrp, price, unit, tax_percent, stock, barcode FROM product_variants WHERE product_id = $1 ORDER BY mrp NULLS FIRST', [id])
+    res.json(q.rows)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Internal server error' })
@@ -146,6 +182,19 @@ router.put('/:id', async (req, res) => {
   try {
     if (!process.env.DATABASE_URL) {
       return res.json({ id, sku: sku || '', name, price: price || 0, mrp: mrp || null, unit: unit || null, tax_percent: tax_percent || 0, stock: stock || 0 })
+    }
+
+    // Ensure SKU+MRP uniqueness on update: check other products with same SKU and MRP (case-insensitive SKU) excluding this id
+    if (sku && sku.toString().trim()) {
+      const skuVal = sku.toString().trim()
+      const mrpVal = mrp !== undefined ? mrp : null
+      let dup
+      if (req.user && req.user.store_id) {
+        dup = await db.query('SELECT id FROM products WHERE LOWER(sku) = LOWER($1) AND mrp IS NOT DISTINCT FROM $2 AND store_id = $3 AND id <> $4', [skuVal, mrpVal, req.user.store_id, id])
+      } else {
+        dup = await db.query('SELECT id FROM products WHERE LOWER(sku) = LOWER($1) AND mrp IS NOT DISTINCT FROM $2 AND id <> $3', [skuVal, mrpVal, id])
+      }
+      if (dup.rows.length > 0) return res.status(400).json({ error: 'SKU/barcode with same MRP already exists' })
     }
 
     const result = await db.query(

@@ -1,0 +1,18 @@
+{
+  "user_roles": 80,
+  "roles": 5,
+  "users": 80,
+  "suppliers": 1,
+  "refresh_tokens": 141,
+  "purchases": 67,
+  "products": 89,
+  "migrations": 32,
+  "sales": 3,
+  "purchase_items": 68,
+  "sale_items": 3,
+  "store_settings": 2,
+  "customers": 1,
+  "product_variants": 36,
+  "stores_auth_backup": 0,
+  "stores": 7
+}

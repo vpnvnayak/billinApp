@@ -18,6 +18,8 @@ export default function Login({ onLogin }) {
       const { token, user } = res.data
       // server sets refresh token cookie (HttpOnly)
       setToken(token)
+  // In development the server may return a refreshToken in the body to help local dev (insecure). Store it as devRefreshToken for the refresh fallback.
+  try { if (res.data.refreshToken) localStorage.setItem('devRefreshToken', res.data.refreshToken) } catch (e) {}
       // optionally persist a 'remember' flag locally (not storing tokens here)
       try { localStorage.setItem('rememberMe', remember ? '1' : '0') } catch (e) {}
       onLogin(user)

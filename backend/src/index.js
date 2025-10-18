@@ -103,7 +103,9 @@ app.use((req, res, next) => {
 
 // initialize schema cache once at startup (best-effort)
 const schemaCache = require('./schemaCache')
-schemaCache.init().then(() => console.log('schema cache initialized'))
+schemaCache.init().then(() => {
+	if (process.env.NODE_ENV !== 'test') console.log('schema cache initialized')
+}).catch(() => {})
 
 const productsRouter = require('./routes/products');
 const posRouter = require('./routes/pos');

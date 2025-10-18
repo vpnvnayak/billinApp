@@ -29,6 +29,53 @@ export default function PurchaseDetail({ id }) {
     }
   }
 
+  function mapExistingToNewItem(it) {
+    // Normalize common alternative field names coming from backend or different flows
+    const qty = Number(it.qty ?? it.quantity ?? 0) || 0
+    const unitPrice = Number(
+      it.unit_price ?? it.est_rate ?? it.sp_rate ?? it.retail_price ?? it.price ?? 0
+    )
+    const gross = Number(
+      it.gross_amount ?? it.gross ?? (unitPrice * qty) ?? 0
+    )
+
+    const discountPctRaw = Number(it.discount_pct ?? it.discountPercent ?? 0) || 0
+    const discountRsRaw = Number(it.discount_rs ?? it.discountAmount ?? it.discount ?? 0) || 0
+    const derivedMode = (it.discount_mode
+      ? it.discount_mode
+      : (discountRsRaw > 0 && discountPctRaw === 0) ? 'rs' : 'pct')
+
+    return {
+      product_id: it.product_id ?? it.productId ?? '',
+      sku: it.sku ?? it.barcode ?? '',
+      name: it.name ?? '',
+      qty: qty || 1,
+      gross: gross || 0,
+      est_rate: Number(it.est_rate ?? unitPrice ?? 0),
+      sp_rate: Number(it.sp_rate ?? 0),
+      discount_mode: derivedMode,
+      discount_pct: discountPctRaw,
+      discount_rs: discountRsRaw,
+      expiry: it.expiry ?? it.expiry_date ?? it.expiryDate ?? '',
+      tax_pct: Number(it.tax_pct ?? it.tax_percent ?? it.taxPercent ?? 0),
+      cess_pct: Number(it.cess_pct ?? it.cessPercent ?? 0),
+      batch: it.batch ?? it.batch_no ?? it.batchNo ?? '',
+      mrp: Number(it.mrp ?? it.MRP ?? 0),
+      mrp_profit_pct: Number(it.mrp_profit_pct ?? 0),
+      retail_price: Number(it.retail_price ?? it.price ?? it.selling_price ?? 0),
+      retail_profit_pct: Number(it.retail_profit_pct ?? 0),
+      wholesale_price: Number(it.wholesale_price ?? 0),
+      wholesale_profit_pct: Number(it.wholesale_profit_pct ?? 0),
+      special_price: Number(it.special_price ?? 0),
+      sp_profit_pct: Number(it.sp_profit_pct ?? 0),
+      // retain some computed fields for reference in UI where needed
+      unit_price: unitPrice,
+      gross_amount: gross,
+      line_total: Number(it.line_total ?? it.total_amount ?? it.after_discount ?? 0),
+      total_amount: Number(it.total_amount ?? it.line_total ?? 0)
+    }
+  }
+
   const [newItem, setNewItem] = useState(getEmptyNewItem())
   const productSelectRef = useRef(null)
   const [editingIndex, setEditingIndex] = useState(-1)
@@ -210,6 +257,8 @@ export default function PurchaseDetail({ id }) {
 
     const item = {
       ...newItem,
+      // include a canonical `price` field so backend receives selling/retail price
+      price: Number(newItem.retail_price || newItem.price || unit) || 0,
       unit_price: unit,
       qty,
       gross_amount: Number(grossLine.toFixed(2)),
@@ -238,6 +287,18 @@ export default function PurchaseDetail({ id }) {
     }
     setNewItem(getEmptyNewItem())
     setTimeout(() => { try { productSelectRef.current && productSelectRef.current.focus() } catch (e) {} }, 80)
+  }
+
+  function handleEditItem(it, i) {
+    // Populate form from selected line item and prepare edit mode
+    setNewItem(mapExistingToNewItem(it))
+    setEditingIndex(i)
+    try { productSelectRef.current && productSelectRef.current.focus() } catch (e) {}
+    // Suppress immediate product search fetch and hide suggestions
+    ignoreNextProductFetch.current = true
+    setProductSearch('')
+    setProductSuggestionsVisible(false)
+    setProductHighlightedIndex(-1)
   }
 
   async function save() {
@@ -507,7 +568,14 @@ export default function PurchaseDetail({ id }) {
                         }); ignoreNextProductFetch.current = true; setProductSearch(p.name || ''); setProductSuggestionsVisible(false); setProductHighlightedIndex(-1) }}
                       style={{ padding: '8px 10px', cursor: 'pointer', background: productHighlightedIndex === idx ? 'var(--color-surface-2)' : 'transparent', borderBottom: '1px solid rgba(0,0,0,0.02)' }}
                     >
-                      <div style={{ fontWeight: 700 }}>{p.name}</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                        <div style={{ fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                        {p.mrp != null && p.mrp !== '' && (
+                          <div style={{ fontSize: 12, color: 'var(--color-muted)', whiteSpace: 'nowrap' }}>
+                            MRP: ₹ {Number(p.mrp || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </div>
+                        )}
+                      </div>
                       <div style={{ fontSize: 12, color: 'var(--color-muted)' }}>{p.sku || ''}</div>
                     </div>
                   ))}
@@ -679,7 +747,7 @@ export default function PurchaseDetail({ id }) {
                       <div style={{ fontSize: 12, color: 'var(--color-muted)' }}>{it.barcode || it.sku || ''}</div>
                     </td>
                     <td>{it.mrp ? `₹ ${Number(it.mrp).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : ''}</td>
-                    <td>{it.retail_price ? `₹ ${Number(it.retail_price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : ''}</td>
+                    <td>{(it.retail_price || it.price) ? `₹ ${Number(it.retail_price || it.price).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : ''}</td>
                     <td>{it.qty ?? 0}</td>
                     <td>₹ {Number(it.unit_price || it.est_rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                     <td>{it.gross_amount ? `₹ ${Number(it.gross_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : it.gross ? `₹ ${Number(it.gross).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '₹ 0.00'}</td>
@@ -688,7 +756,7 @@ export default function PurchaseDetail({ id }) {
                     <td>{it.cess_pct ? `${it.cess_pct}%` : '0%'}</td>
                     <td>{it.total_amount ? `₹ ${Number(it.total_amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : `₹ ${Number(it.line_total || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`}</td>
                     <td style={{ display: 'flex', gap: 8 }}>
-                      <button className="icon-btn" title="Edit item" onClick={() => { setNewItem({ ...it }); setEditingIndex(i); try { productSelectRef.current && productSelectRef.current.focus() } catch (e) {} }}>
+                      <button className="icon-btn" title="Edit item" onClick={() => handleEditItem(it, i)}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
                           <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="currentColor" />
                           <path d="M20.71 7.04a1.003 1.003 0 0 0 0-1.42l-2.34-2.34a1.003 1.003 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z" fill="currentColor" />

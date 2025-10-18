@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon --watch src --exec node src/index.js",
-    "migrate": "node ./scripts/migrate.js",
+  "migrate": "node ./scripts/migrate.js",
+  "test:migrate": "node ./scripts/migrate.js && jest --runInBand",
     "seed": "node ./scripts/seedAuth.js",
     "test": "jest --runInBand"
   },

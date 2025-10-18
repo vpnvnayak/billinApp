@@ -167,7 +167,7 @@ export default function Purchases() {
                       <button className="btn small" style={{ marginRight: 6 }}>Bill</button>
                       <button className="btn small">View</button>
                     </td>
-                    <td><button className="btn small">✎</button></td>
+                    <td><button className="btn small" onClick={() => { if (window && window.__appNavigate) window.__appNavigate(`/purchases/${p.id}`); else { try { window.history.pushState(null, '', `/purchases/${p.id}`) } catch (e) {} window.location.reload() } }}>✎</button></td>
                   </tr>
                 )
               })}
