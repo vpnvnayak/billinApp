@@ -45,9 +45,21 @@ api.interceptors.response.use(
       }
       isRefreshing = true
       try {
-        // refresh via HttpOnly cookie (server reads cookie)
-        const resp = await axios.post(`${base}/auth/refresh`, {}, { withCredentials: true })
-        const newToken = resp.data.token
+        // Try cookie-based refresh first (server reads HttpOnly cookie)
+        let resp = null
+        try {
+          resp = await axios.post(`${base}/auth/refresh`, {}, { withCredentials: true })
+        } catch (e) {
+          // ignore and fallback to devRefreshToken
+        }
+        if (!resp || !resp.data || !resp.data.token) {
+          const stored = localStorage.getItem('devRefreshToken')
+          if (stored) {
+            resp = await axios.post(`${base}/auth/refresh`, { refreshToken: stored }, { withCredentials: false })
+          }
+        }
+        const newToken = resp && resp.data && resp.data.token
+        if (!newToken) throw new Error('refresh failed')
         setToken(newToken)
         processQueue(null, newToken)
         isRefreshing = false
@@ -58,6 +70,7 @@ api.interceptors.response.use(
         isRefreshing = false
         // clear tokens
         localStorage.removeItem('token')
+        localStorage.removeItem('devRefreshToken')
         localStorage.removeItem('refreshToken')
         return Promise.reject(e)
       }

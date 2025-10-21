@@ -107,6 +107,8 @@ export function UIProvider({ children }) {
       setStore(storeObj.settings)
       try { localStorage.setItem(STORE_CACHE_KEY, JSON.stringify(storeObj.settings)) } catch (e) {}
     }
+    // notify listeners that store changed so UI can refetch store-scoped data
+    try { window.dispatchEvent(new CustomEvent('store:changed', { detail: storeObj })) } catch (e) {}
   }
 
   function setAvailable(list) {

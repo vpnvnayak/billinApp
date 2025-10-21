@@ -13,7 +13,33 @@ const destructivePatterns = [
 ]
 
 function scan() {
-  const files = fs.readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).sort()
+  // Prefer scanning only migrations changed in this branch (compare with base ref)
+  let files = []
+  try {
+    const { execSync } = require('child_process')
+    const baseCandidates = Array.from(new Set([process.env.GITHUB_BASE_REF, 'main', 'Main'].filter(Boolean)))
+    for (const baseRef of baseCandidates) {
+      try {
+        // try to fetch the base ref (ignore failures)
+        try { execSync(`git fetch origin ${baseRef} --quiet --depth=1`) } catch (e) { /* ignore */ }
+        // compute diff against baseRef
+        let diff = ''
+        try { diff = execSync(`git diff --name-only origin/${baseRef}...HEAD`, { encoding: 'utf8' }) || '' } catch (e) { diff = '' }
+        const changed = diff.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+        const migrated = changed.filter(p => p.startsWith('backend/migrations/') && p.endsWith('.sql')).map(p => path.basename(p)).sort()
+        if (migrated && migrated.length > 0) { files = migrated; break }
+      } catch (e) {
+        // try next candidate
+      }
+    }
+  } catch (e) {
+    // ignore and fallback below
+  }
+
+  // If no changed migration files were found via git diff, scan all migrations as a fallback to be safe
+  if (!files || files.length === 0) {
+    files = fs.readdirSync(MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).sort()
+  }
   let found = false
   for (const f of files) {
     const p = path.join(MIGRATIONS_DIR, f)

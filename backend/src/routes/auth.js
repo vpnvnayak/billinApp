@@ -9,6 +9,63 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 const { requireAuth } = require('../middleware/auth');
 const crypto = require('crypto');
 const tx = require('../tx')
+const { sendPasswordResetEmail } = require('../utils/email')
+
+// Request password reset: POST /api/auth/request-password-reset { email }
+router.post('/request-password-reset', async (req, res) => {
+  try {
+    const { email } = req.body
+    if (!email) return res.status(400).json({ error: 'email required' })
+    const u = await db.query('SELECT id, email FROM users WHERE email = $1', [email])
+    if (u.rows.length === 0) return res.json({ ok: true }) // don't leak existence
+    const user = u.rows[0]
+    // create a 6-digit numeric OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString()
+    // hash the otp for storage
+    const hash = await bcrypt.hash(otp, 10)
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000) // 15 minutes
+    await db.query('INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1,$2,$3)', [user.id, hash, expiresAt])
+    // send email (or log)
+    try { await sendPasswordResetEmail(user.email, otp) } catch (e) { console.error('email send failed', e && e.message) }
+    return res.json({ ok: true })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// Verify OTP and set new password: POST /api/auth/verify-password-reset { email, otp, password }
+router.post('/verify-password-reset', async (req, res) => {
+  try {
+    const { email, otp, password } = req.body
+    if (!email || !otp || !password) return res.status(400).json({ error: 'email, otp, and password required' })
+    const u = await db.query('SELECT id FROM users WHERE email = $1', [email])
+    if (u.rows.length === 0) return res.status(400).json({ error: 'invalid' })
+    const userId = u.rows[0].id
+    // find latest unused token for this user
+    const tRes = await db.query('SELECT id, token_hash, expires_at, used FROM password_reset_tokens WHERE user_id = $1 ORDER BY created_at DESC LIMIT 5', [userId])
+    if (tRes.rows.length === 0) return res.status(400).json({ error: 'invalid or expired' })
+    // find a matching token
+    let matched = null
+    for (const row of tRes.rows) {
+      if (row.used) continue
+      if (row.expires_at && new Date(row.expires_at) < new Date()) continue
+      const ok = await bcrypt.compare(otp, row.token_hash)
+      if (ok) { matched = row; break }
+    }
+    if (!matched) return res.status(400).json({ error: 'invalid or expired' })
+    // update password and mark token used in transaction
+    await tx.runTransaction(async (client) => {
+      const newHash = await bcrypt.hash(password, 10)
+      await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, userId])
+      await client.query('UPDATE password_reset_tokens SET used = true WHERE id = $1', [matched.id])
+    }, { route: 'auth.verifyPasswordReset' })
+    return res.json({ ok: true })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
 
 // Register (for admin/dev use)
 router.post('/register', async (req, res) => {
@@ -30,6 +87,7 @@ router.post('/register', async (req, res) => {
 });
 
 // Login
+const NODE_ENV = process.env.NODE_ENV || 'development'
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'email and password required' });
@@ -56,12 +114,19 @@ router.post('/login', async (req, res) => {
       const refresh = crypto.randomBytes(48).toString('hex');
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
       await db.query('INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)', [refresh, user.id, expiresAt]);
-  // set cookie (HttpOnly) with secure production defaults
-  const cookieSecure = process.env.COOKIE_SECURE === 'true';
+  // set cookie (HttpOnly)
+  // choose secure when connection is TLS or COOKIE_SECURE env is set
   const cookieDomain = process.env.COOKIE_DOMAIN || undefined
-  const sameSite = (process.env.NODE_ENV === 'production') ? 'strict' : 'lax'
-  res.cookie('refreshToken', refresh, { httpOnly: true, sameSite, secure: cookieSecure, domain: cookieDomain, expires: expiresAt });
-      res.json({ token, user: { id: user.id, email: user.email, full_name: user.full_name, roles, store_id } });
+  const cookieSecure = (process.env.COOKIE_SECURE === 'true') || req.secure || (req.get && req.get('x-forwarded-proto') === 'https')
+  // Use SameSite=None only when cookie is secure (modern browsers require Secure for SameSite=None)
+  const sameSite = cookieSecure ? 'none' : 'lax'
+      res.cookie('refreshToken', refresh, { httpOnly: true, sameSite, secure: cookieSecure, domain: cookieDomain, expires: expiresAt });
+      // In development include the refresh token in the response body to aid local dev (not secure)
+      if (NODE_ENV !== 'production') {
+        res.json({ token, refreshToken: refresh, user: { id: user.id, email: user.email, full_name: user.full_name, roles, store_id } });
+      } else {
+        res.json({ token, user: { id: user.id, email: user.email, full_name: user.full_name, roles, store_id } });
+      }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -91,8 +156,9 @@ router.get('/me', requireAuth, async (req, res) => {
 // Refresh via HttpOnly cookie; rotates refresh token
 router.post('/refresh', async (req, res) => {
   try {
-    const refreshToken = req.cookies.refreshToken;
-    if (!refreshToken) return res.status(401).json({ error: 'No refresh token' });
+  // Accept refresh token from cookie (preferred) or from request body (dev fallback)
+  const refreshToken = req.cookies.refreshToken || (req.body && req.body.refreshToken);
+  if (!refreshToken) return res.status(401).json({ error: 'No refresh token' });
     const r = await db.query('SELECT id, user_id, expires_at FROM refresh_tokens WHERE token = $1', [refreshToken]);
     if (r.rows.length === 0) return res.status(401).json({ error: 'Invalid refresh token' });
     const row = r.rows[0];
@@ -117,11 +183,16 @@ router.post('/refresh', async (req, res) => {
       await client.query('DELETE FROM refresh_tokens WHERE id = $1', [row.id]);
       await client.query('INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)', [newRefresh, userId, expiresAt]);
     }, { route: 'auth.refresh' })
-  const cookieSecure = process.env.COOKIE_SECURE === 'true';
   const cookieDomain = process.env.COOKIE_DOMAIN || undefined
-  const sameSite = (process.env.NODE_ENV === 'production') ? 'strict' : 'lax'
-  res.cookie('refreshToken', newRefresh, { httpOnly: true, sameSite, secure: cookieSecure, domain: cookieDomain, expires: expiresAt });
-    res.json({ token });
+  const cookieSecure = (process.env.COOKIE_SECURE === 'true') || req.secure || (req.get && req.get('x-forwarded-proto') === 'https')
+  const sameSite = cookieSecure ? 'none' : 'lax'
+    // set cookie when possible; include new refresh token in body in development for convenience
+    res.cookie('refreshToken', newRefresh, { httpOnly: true, sameSite, secure: cookieSecure, domain: cookieDomain, expires: expiresAt });
+    if (NODE_ENV !== 'production') {
+      res.json({ token, refreshToken: newRefresh });
+    } else {
+      res.json({ token });
+    }
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -137,8 +208,9 @@ router.post('/logout', async (req, res) => {
     }
   // clear cookie (use same options as when setting)
   const cookieDomain = process.env.COOKIE_DOMAIN || undefined
-  const sameSite = (process.env.NODE_ENV === 'production') ? 'strict' : 'lax'
-  res.clearCookie('refreshToken', { httpOnly: true, sameSite, secure: process.env.COOKIE_SECURE === 'true', domain: cookieDomain });
+  const cookieSecure = (process.env.COOKIE_SECURE === 'true') || req.secure || (req.get && req.get('x-forwarded-proto') === 'https')
+  const sameSite = cookieSecure ? 'none' : 'lax'
+  res.clearCookie('refreshToken', { httpOnly: true, sameSite, secure: cookieSecure, domain: cookieDomain });
     res.json({ ok: true });
   } catch (err) {
     console.error(err);

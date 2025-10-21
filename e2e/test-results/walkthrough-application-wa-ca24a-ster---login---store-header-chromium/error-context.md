@@ -1,0 +1,162 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - complementary "Primary" [ref=e4]:
+      - generic [ref=e5]:
+        - button "Collapse navigation" [ref=e6] [cursor=pointer]:
+          - img [ref=e7]
+        - heading "DinoPos" [level=2] [ref=e10]
+      - navigation [ref=e11]:
+        - list [ref=e12]:
+          - listitem [ref=e13]:
+            - link "Dashboard" [ref=e14] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e16]
+              - generic [ref=e18]: Dashboard
+          - listitem [ref=e19]:
+            - link "POS" [ref=e20] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e22]
+              - generic [ref=e24]: POS
+          - listitem [ref=e25]:
+            - link "Contacts" [ref=e26] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e28]
+              - generic [ref=e30]: Contacts
+          - listitem [ref=e31]:
+            - link "Suppliers" [ref=e32] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e34]
+              - generic [ref=e36]: Suppliers
+          - listitem [ref=e37]:
+            - link "Products" [ref=e38] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e40]
+              - generic [ref=e42]: Products
+          - listitem [ref=e43]:
+            - link "Purchases" [ref=e44] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e46]
+              - generic [ref=e48]: Purchases
+          - listitem [ref=e49]:
+            - link "Sales" [ref=e50] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e52]
+              - generic [ref=e54]: Sales
+          - listitem [ref=e55]:
+            - link "Stock" [ref=e56] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e58]
+              - generic [ref=e60]: Stock
+          - listitem [ref=e61]:
+            - link "Daybook" [ref=e62] [cursor=pointer]:
+              - /url: "#"
+              - img [ref=e64]
+              - generic [ref=e66]: Daybook
+      - link "Settings" [ref=e68] [cursor=pointer]:
+        - /url: "#"
+        - img [ref=e70]
+        - generic [ref=e73]: Settings
+    - generic [ref=e75]:
+      - banner [ref=e76]:
+        - generic [ref=e77]:
+          - heading "Dashboard" [level=1] [ref=e79]
+          - generic [ref=e80]:
+            - generic [ref=e82]: Current week
+            - generic [ref=e84]: S
+            - button "E ▾" [ref=e86] [cursor=pointer]:
+              - generic [ref=e87]: E
+              - generic [ref=e88]: ▾
+      - main [ref=e89]:
+        - generic [ref=e91]:
+          - generic [ref=e92]:
+            - generic [ref=e93]:
+              - generic [ref=e94]:
+                - generic [ref=e95]: Transaction Count
+                - generic [ref=e96]: "0"
+                - generic [ref=e97]:
+                  - generic [ref=e98]: +2.9%
+                  - generic [ref=e99]: from last week
+              - generic [ref=e100]:
+                - generic [ref=e101]: Total sales
+                - generic [ref=e102]: "0.00"
+                - generic [ref=e103]:
+                  - generic [ref=e104]: +5.6%
+                  - generic [ref=e105]: from last week
+              - generic [ref=e106]:
+                - generic [ref=e107]: Total Trade-Ins
+                - generic [ref=e108]: "0"
+                - generic [ref=e109]:
+                  - generic [ref=e110]: +3.5%
+                  - generic [ref=e111]: from last week
+              - generic [ref=e112]:
+                - generic [ref=e113]: Total Credit (payables)
+                - generic [ref=e114]: ₹ 0.00
+                - generic [ref=e115]:
+                  - generic [ref=e116]: —
+                  - generic [ref=e117]: current outstanding
+            - generic [ref=e118]:
+              - generic [ref=e119]:
+                - generic [ref=e120]: Average Transaction Value
+                - generic [ref=e121]: ₹ 0.00
+                - generic [ref=e122]:
+                  - generic [ref=e123]: +6.2%
+                  - generic [ref=e124]: from last week
+              - generic [ref=e125]:
+                - generic [ref=e126]: Sales amount
+                - generic [ref=e127]: ₹ 0.00
+                - generic [ref=e128]:
+                  - generic [ref=e129]: +10.02%
+                  - generic [ref=e130]: from last week
+              - generic [ref=e131]:
+                - generic [ref=e132]: Trade-Ins amount
+                - generic [ref=e133]: ₹ 0
+                - generic [ref=e134]:
+                  - generic [ref=e135]: "-1.6%"
+                  - generic [ref=e136]: from last week
+              - generic [ref=e137]:
+                - generic [ref=e138]: Refunds amount
+                - generic [ref=e139]: ₹ 0
+                - generic [ref=e140]:
+                  - generic [ref=e141]: "-4.7%"
+                  - generic [ref=e142]: from last week
+            - generic [ref=e143]:
+              - generic [ref=e144]:
+                - generic [ref=e145]: Total items in stock
+                - generic [ref=e146]: "0"
+                - generic [ref=e148]: "Critical: 0 • Unavailable: 0 • Excess: 0"
+              - generic [ref=e149]:
+                - generic [ref=e150]: Top Category
+                - generic [ref=e151]: General
+              - generic [ref=e152]:
+                - generic [ref=e153]: Low stock
+                - generic [ref=e154]: "0"
+                - link "View products" [ref=e156] [cursor=pointer]:
+                  - /url: "#"
+          - generic [ref=e157]:
+            - generic [ref=e158]:
+              - generic [ref=e159]: Sales Trends
+              - generic [ref=e161]: No sales in the last 7 days
+            - generic [ref=e162]:
+              - generic [ref=e164]:
+                - text: Accepted Items
+                - generic [ref=e165]: 0 total items
+              - generic [ref=e166]:
+                - generic [ref=e167]: Recent Purchases 0
+                - generic [ref=e169]: No recent purchases
+                - link "View all purchases" [ref=e171] [cursor=pointer]:
+                  - /url: "#"
+              - generic [ref=e172]:
+                - generic [ref=e173]: Low stock products 0
+                - generic [ref=e175]: No low-stock products
+                - link "View all" [ref=e177] [cursor=pointer]:
+                  - /url: "#"
+              - generic [ref=e178]:
+                - generic [ref=e179]: Top products by revenue Top 5
+                - generic [ref=e181]: No data
+                - link "View products" [ref=e183] [cursor=pointer]:
+                  - /url: "#"
+  - status
+```

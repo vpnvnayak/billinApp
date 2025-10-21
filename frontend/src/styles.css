@@ -1,32 +1,32 @@
 :root{
-	/* Primary theme from attachment */
-	--color-primary: #885CF7; /* Outfit primary purple */
-	--color-primary-600: #6f45e8;
-	--color-primary-700: #5a32d1;
-	--color-accent: #7c7c86; /* muted grey accent (fallback) */
+	/* High-contrast Black & White */
+	--color-primary: #000000;
+	--color-primary-600: #0b0b0b;
+	--color-primary-700: #1a1a1a;
+	--color-accent: #6b6b6b;
 
 	/* Surfaces */
-	--color-surface: #FFFFFF; /* white */
-	--color-surface-2: #FCFCFF; /* subtle off-white background */
-	--color-border: rgba(23,23,26,0.06); /* subtle border matching gray/dark */
+	--color-surface: #FFFFFF;
+	--color-surface-2: #F7F7F7;
+	--color-border: rgba(0,0,0,0.12);
 
 	/* Text */
-	--color-text: #17171A; /* dark text */
-	--color-muted: #39393E; /* gray tone from attachment */
+	--color-text: #000000;
+	--color-muted: #444444;
 
 	/* Semantic colors */
 	--color-success: #16a34a;
 	--color-warning: #d97706;
 	--color-danger: #e11d48;
 
-	--focus-ring: 0 0 0 6px rgba(136,92,247,0.12);
-	--radius: 14px; /* more rounded cards per design */
+	--focus-ring: 0 0 0 6px rgba(0,0,0,0.08);
+	--radius: 14px;
 	--radius-sm: 10px;
 	--gap: 12px;
 	--transition-fast: 160ms cubic-bezier(.2,.8,.2,1);
-	--card-shadow: 0 10px 30px rgba(15,23,42,0.06);
-	--color-gray: #39393E;
-	--color-dark: #17171A;
+	--card-shadow: 0 10px 30px rgba(0,0,0,0.06);
+	--color-gray: #6b6b6b;
+	--color-dark: #000000;
 }
 
 .app header { background: transparent; color: var(--color-primary); padding: 14px 18px; position: relative; z-index: 10 }

@@ -11,6 +11,8 @@ export default function Products() {
   const [error, setError] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [expanded, setExpanded] = useState({}) // map productId -> boolean
+  const [variantsMap, setVariantsMap] = useState({}) // map productId -> [variants]
   const [entries, setEntries] = useState(10)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
@@ -38,6 +40,23 @@ export default function Products() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // Toggle expand/collapse for product variants and fetch variants lazily
+  async function toggleVariants(product) {
+    if (!product || !product.id) return
+    const pid = product.id
+    const cur = !!expanded[pid]
+    if (cur) { setExpanded(es => ({ ...es, [pid]: false })); return }
+    if (!variantsMap[pid]) {
+      try {
+        const r = await api.get(`/products/${pid}/variants`)
+        setVariantsMap(m => ({ ...m, [pid]: Array.isArray(r.data) ? r.data : [] }))
+      } catch (e) {
+        setVariantsMap(m => ({ ...m, [pid]: [] }))
+      }
+    }
+    setExpanded(es => ({ ...es, [pid]: true }))
   }
 
   const filtered = (() => {
@@ -126,17 +145,35 @@ export default function Products() {
                 <tr><td colSpan={9}>No products found</td></tr>
               )}
               {filtered.map((p, i) => (
-                <tr key={p.id}>
-                  <td>{i + 1}</td>
-                  <td>{p.sku}</td>
-                  <td>{p.name}</td>
-                  <td>{p.mrp ?? ''}</td>
-                  <td>{p.price ?? ''}</td>
-                  <td>{p.tax_percent != null ? `${p.tax_percent}%` : ''}</td>
-                  <td>{p.stock ?? 0}</td>
-                  <td>{p.unit ?? ''}</td>
-                  <td><button className="btn small" onClick={() => setEditing(p)}>Edit</button></td>
-                </tr>
+                <React.Fragment key={p.id}>
+                  <tr>
+                    <td style={{ textAlign: 'center' }}>{/* chevron */}
+                      {p && <button className="btn small" onClick={() => toggleVariants(p)}>{expanded[p.id] ? '▾' : '▸'}</button>}
+                    </td>
+                    <td>{p.sku}</td>
+                    <td>{p.name}</td>
+                    <td>{p.mrp ?? ''}</td>
+                    <td>{p.price ?? ''}</td>
+                    <td>{p.tax_percent != null ? `${p.tax_percent}%` : ''}</td>
+                    <td>{p.stock ?? 0}</td>
+                    <td>{p.unit ?? ''}</td>
+                    <td><button className="btn small" onClick={() => setEditing(p)}>Edit</button></td>
+                  </tr>
+                  {expanded[p.id] && (variantsMap[p.id] || []).map((v, vi) => (
+                    <tr key={`v-${v.id}`} className="variant-row">
+                      <td></td>
+                      <td style={{ paddingLeft: 24 }}>{p.sku}</td>
+                      {/* show the product's exact name from master; variant only changes MRP/price/stock */}
+                      <td>{p.name}</td>
+                      <td>{v.mrp == null ? '' : v.mrp}</td>
+                      <td>{v.price ?? ''}</td>
+                      <td>{v.tax_percent != null ? `${v.tax_percent}%` : ''}</td>
+                      <td>{v.stock ?? 0}</td>
+                      <td>{v.unit ?? ''}</td>
+                      <td><button className="btn small" onClick={() => setEditing(Object.assign({}, p, { variant_id: v.id, mrp: v.mrp, price: v.price, tax_percent: v.tax_percent, stock: v.stock, unit: v.unit, barcode: v.barcode }))}>Edit</button></td>
+                    </tr>
+                  ))}
+                </React.Fragment>
               ))}
             </tbody>
             </table>
@@ -170,24 +207,50 @@ function ProductModal({ onClose, onCreated, product }) {
   const [stock, setStock] = useState(product?.stock ?? 0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  const [skuExists, setSkuExists] = useState(false)
+  const skuTimer = React.useRef()
 
   async function save() {
     setError(null)
     if (!name) return setError('Name is required')
+    if (skuExists) return setError('Barcode/SKU already exists')
     setSaving(true)
     try {
       if (product && product.id) {
-        await api.put(`/products/${product.id}`, { name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock })
+        // If editing a variant (variant_id present), call variant update endpoint
+        if (product.variant_id) {
+          await api.put(`/products/variants/${product.variant_id}`, { mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock, barcode: sku || null })
+        } else {
+          await api.put(`/products/${product.id}`, { name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock })
+        }
       } else {
         await api.post('/products', { name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock })
       }
       if (onCreated) await onCreated()
     } catch (err) {
-      setError(product ? 'Failed to update product' : 'Failed to create product')
+      setError(product ? 'Failed to update product/variant' : 'Failed to create product')
     } finally {
       setSaving(false)
     }
   }
+
+  useEffect(() => {
+    // debounce sku existence check
+    clearTimeout(skuTimer.current)
+    const s = (sku || '').toString().trim()
+    if (!s) { setSkuExists(false); return }
+    skuTimer.current = setTimeout(async () => {
+      try {
+        const r = await api.get('/products', { params: { q: s, limit: 10 } })
+        const list = (r.data && Array.isArray(r.data.data)) ? r.data.data : (Array.isArray(r.data) ? r.data : [])
+        const found = list.find(p => (p.sku || '').toString().toLowerCase() === s.toLowerCase())
+        // if editing, ignore match with same id
+        if (found && (!product || found.id !== product.id)) setSkuExists(true)
+        else setSkuExists(false)
+      } catch (e) { setSkuExists(false) }
+    }, 300)
+    return () => clearTimeout(skuTimer.current)
+  }, [sku, product])
 
   return (
     <div className="modal-backdrop">
@@ -196,6 +259,7 @@ function ProductModal({ onClose, onCreated, product }) {
         {error && <div className="error">{error}</div>}
   <label className="field"><span className="field-label">Name</span><input type="text" value={name} onChange={e => setName(e.target.value)} /></label>
   <label className="field"><span className="field-label">Barcode / SKU</span><input type="text" value={sku} onChange={e => setSku(e.target.value)} /></label>
+    {skuExists && <div className="error">Barcode/SKU already exists</div>}
 
         <div className="row">
           <div className="col">

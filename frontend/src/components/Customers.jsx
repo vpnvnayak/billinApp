@@ -2,9 +2,11 @@ import React, { useEffect, useState } from 'react'
 import api from '../services/api'
 import ListControls from './ui/ListControls'
 import PaginationFooter from './ui/PaginationFooter'
+import { useUI } from './ui/UIProvider'
 
 export default function Customers() {
   const [list, setList] = useState([])
+  const [kpis, setKpis] = useState({ total_customers: 0, active_customers_30d: 0, avg_spend: 0, new_customers_30d: 0, loyalty_members: 0 })
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
@@ -31,7 +33,43 @@ export default function Customers() {
     } catch (e) { console.error(e); setList([]); setTotal(0) } finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [page, entries, search])
+  async function loadKpis() {
+    try {
+      const r = await api.get('/customers/aggregates')
+      if (r && r.data) {
+        setKpis({
+          total_customers: Number(r.data.total_customers || 0),
+          active_customers_30d: Number(r.data.active_customers_30d || 0),
+          avg_spend: Number(r.data.avg_spend || 0),
+          new_customers_30d: Number(r.data.new_customers_30d || 0),
+          loyalty_members: Number(r.data.loyalty_members || 0)
+        })
+      }
+    } catch (e) {
+      console.error('failed to load customer kpis', e)
+      setKpis({ total_customers: 0, active_customers_30d: 0, avg_spend: 0, new_customers_30d: 0, loyalty_members: 0 })
+    }
+  }
+
+  const { selectedStore } = useUI() || {}
+
+  // reload when paging/search changes or when the selected store changes
+  useEffect(() => { load(); loadKpis() }, [page, entries, search, selectedStore])
+
+  // listen for global events so other parts of the app can trigger a refresh
+  useEffect(() => {
+    const handler = () => { setPage(1); load() }
+    try {
+      window.addEventListener('customers:changed', handler)
+      window.addEventListener('store:changed', handler)
+    } catch (e) {}
+    return () => {
+      try {
+        window.removeEventListener('customers:changed', handler)
+        window.removeEventListener('store:changed', handler)
+      } catch (e) {}
+    }
+  }, [selectedStore])
 
   async function create() {
     if (!name.trim()) return import('../services/ui').then(m => m.showAlert('Name is required'))
@@ -62,27 +100,27 @@ export default function Customers() {
       <div className="kpi-row">
         <div className="kpi-card">
           <div className="kpi-label">Total Customers</div>
-          <div className="kpi-value">{list.length}</div>
+          <div className="kpi-value">{kpis.total_customers}</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">Active Customers</div>
-          <div className="kpi-value">320</div>
+          <div className="kpi-value">{kpis.active_customers_30d}</div>
           <div className="kpi-meta">the last 30 days</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">Average Spend</div>
-          <div className="kpi-value">₹150</div>
+          <div className="kpi-value">₹{Number(kpis.avg_spend || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
           <div className="kpi-meta">per customer</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">New Customers</div>
-          <div className="kpi-value">45</div>
+          <div className="kpi-value">{kpis.new_customers_30d}</div>
           <div className="kpi-meta">last 30 days</div>
         </div>
         <div className="kpi-right">
           <div className="kpi-card">
             <div className="kpi-label">Loyalty Program Members</div>
-            <div className="kpi-value">36</div>
+            <div className="kpi-value">{kpis.loyalty_members}</div>
           </div>
         </div>
       </div>
