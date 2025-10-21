@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test')
 
-const API_BASE = process.env.E2E_API_BASE || 'http://localhost:4000'
+const API_BASE = process.env.E2E_API_BASE || 'https://localhost:4000'
 
 function randomSuffix() { return Math.floor(Math.random() * 100000) }
 
