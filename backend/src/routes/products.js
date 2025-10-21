@@ -46,7 +46,9 @@ router.get('/', async (req, res) => {
       params.push(storeId)
     }
     const offset = (page - 1) * limit
-  const selectCols = includeIsRepacking ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking, COUNT(*) OVER() AS total_count' : 'id, sku, name, price, mrp, unit, tax_percent, stock, COUNT(*) OVER() AS total_count'
+  const includeStoreSeq = schemaCache.hasColumn('products', 'store_seq')
+  const selectColsBase = includeIsRepacking ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking' : 'id, sku, name, price, mrp, unit, tax_percent, stock'
+  const selectCols = includeStoreSeq ? `${selectColsBase}, store_seq, COUNT(*) OVER() AS total_count` : `${selectColsBase}, COUNT(*) OVER() AS total_count`
   const sql = `SELECT ${selectCols} FROM products ${where} ORDER BY id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
     params.push(limit, offset)
     let result
@@ -107,7 +109,9 @@ router.get('/:id', async (req, res) => {
   // scope by store if present
   const storeId = req.user && req.user.store_id ? req.user.store_id : null
   const includeIsRepackingForGet = schemaCache.hasColumn('products', 'is_repacking')
-  const colsForGet = includeIsRepackingForGet ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking' : 'id, sku, name, price, mrp, unit, tax_percent, stock'
+  const includeStoreSeqForGet = schemaCache.hasColumn('products', 'store_seq')
+  const colsForGetBase = includeIsRepackingForGet ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking' : 'id, sku, name, price, mrp, unit, tax_percent, stock'
+  const colsForGet = includeStoreSeqForGet ? `${colsForGetBase}, store_seq` : colsForGetBase
   let result
   try {
     result = storeId
@@ -132,7 +136,7 @@ router.get('/:id', async (req, res) => {
 // POST /api/products - create a product (simple)
 router.post('/', async (req, res) => {
   try {
-  const { name, sku, price, mrp, unit, stock, tax_percent, is_repacking } = req.body || {}
+  const { name, sku: skuIn, price, mrp, unit, stock, tax_percent, is_repacking } = req.body || {}
     // Basic validation
     if (!name || typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name is required' })
     if (price !== undefined && (Number.isNaN(Number(price)) || Number(price) < 0)) return res.status(400).json({ error: 'price must be a non-negative number' })
@@ -150,6 +154,45 @@ router.post('/', async (req, res) => {
     const taxVal = Number(tax_percent) || 0
     // Ensure SKU+MRP pair is unique within the store (or globally when not scoped). Use case-insensitive SKU match
     // and exact MRP match (including NULL) — i.e., don't allow creating another product with same SKU and same MRP.
+    // If no SKU/barcode provided, generate one using store name prefix + 5-digit random number
+    let sku = skuIn
+    if (!sku || !sku.toString().trim()) {
+      // determine prefix from store name when possible
+      let prefix = 'STR'
+      try {
+        if (storeIdForInsert) {
+          const sres = await db.query('SELECT name FROM stores WHERE id = $1 LIMIT 1', [storeIdForInsert])
+          if (sres && sres.rows && sres.rows.length > 0 && sres.rows[0].name) {
+            const n = (sres.rows[0].name || '').toString().trim().replace(/\s+/g, '')
+            if (n.length >= 3) prefix = n.slice(0, 3).toUpperCase()
+            else if (n.length > 0) prefix = (n + 'XXX').slice(0,3).toUpperCase()
+          }
+        } else if (process.env.STORE_NAME) {
+          const n = process.env.STORE_NAME.toString().trim().replace(/\s+/g, '')
+          if (n.length >= 3) prefix = n.slice(0,3).toUpperCase()
+          else if (n.length > 0) prefix = (n + 'XXX').slice(0,3).toUpperCase()
+        }
+      } catch (e) {
+        // ignore and use default prefix
+      }
+
+      const maxAttempts = 20
+      let attempt = 0
+      let candidate = null
+      while (attempt < maxAttempts) {
+        const rand = Math.floor(Math.random() * 100000).toString().padStart(5, '0')
+        candidate = `${prefix}${rand}`
+        // check uniqueness (case-insensitive), scoped to store when applicable
+        let dupCheck
+        if (storeIdForInsert) dupCheck = await db.query('SELECT id FROM products WHERE LOWER(sku) = LOWER($1) AND store_id = $2', [candidate, storeIdForInsert])
+        else dupCheck = await db.query('SELECT id FROM products WHERE LOWER(sku) = LOWER($1)', [candidate])
+        if (dupCheck.rows.length === 0) break
+        attempt++
+      }
+      if (!candidate) candidate = `${prefix}${Date.now().toString().slice(-5)}`
+      sku = candidate
+    }
+
     if (sku && sku.toString().trim()) {
       const skuVal = sku.toString().trim()
       const mrpVal = mrp !== undefined ? mrp : null
@@ -161,12 +204,14 @@ router.post('/', async (req, res) => {
       }
       if (dup.rows.length > 0) return res.status(400).json({ error: 'SKU/barcode with same MRP already exists' })
     }
-    const isRepackingVal = !!is_repacking
+  const isRepackingVal = !!is_repacking
+  const includeStoreSeq = schemaCache.hasColumn('products', 'store_seq')
     let result
     if (schemaCache.hasColumn('products', 'is_repacking')) {
       try {
+        const returning = includeStoreSeq ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking, store_seq' : 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking'
         result = await db.query(
-          'INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, is_repacking, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking',
+          `INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, is_repacking, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${returning}`,
           [sku || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, isRepackingVal, storeIdForInsert]
         )
       } catch (err) {
@@ -179,12 +224,25 @@ router.post('/', async (req, res) => {
         } else throw err
       }
     } else {
+      const returningNoRepack = includeStoreSeq ? 'id, sku, name, price, mrp, unit, tax_percent, stock, store_seq' : 'id, sku, name, price, mrp, unit, tax_percent, stock'
       result = await db.query(
-        'INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, sku, name, price, mrp, unit, tax_percent, stock',
+        `INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${returningNoRepack}`,
         [sku || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, storeIdForInsert]
       )
     }
-    res.status(201).json(result.rows[0])
+    // If schema cache was not initialized at the time of building the RETURNING clause,
+    // the INSERT may have omitted store_seq even though the DB has the column and trigger.
+    // In that case, fetch the freshly inserted row's store_seq explicitly.
+    const created = result.rows[0]
+    try {
+      if (created && created.store_seq === undefined) {
+        const r2 = await db.query('SELECT store_seq FROM products WHERE id = $1', [created.id])
+        if (r2 && r2.rows && r2.rows.length > 0) created.store_seq = r2.rows[0].store_seq
+      }
+    } catch (e) {
+      // ignore any error fetching store_seq and return what we have
+    }
+    res.status(201).json(created)
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Internal server error' })
