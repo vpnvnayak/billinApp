@@ -746,9 +746,10 @@ export default function POS() {
       {mrpPrompt && (
         <div className="modal-overlay">
           <div className="modal" style={{ maxWidth: 520 }}>
-            <h3 style={{ marginBottom: 8 }}>Select MRP for {mrpPrompt.sku} — {mrpPrompt.group && mrpPrompt.group[0] && mrpPrompt.group[0].name}</h3>
+            {/* Simplified: typed-only MRP input. Do not render clickable MRPs or an MRPs count here. */}
+            <h3 style={{ marginBottom: 8 }}>Enter MRP for {mrpPrompt.sku} — {mrpPrompt.group && mrpPrompt.group[0] && mrpPrompt.group[0].name}</h3>
             <div>
-              <label>Enter MRP for {mrpPrompt.sku} ({mrpPrompt.group && mrpPrompt.group[0] && mrpPrompt.group[0].name})</label>
+              <label>Enter MRP</label>
               <input ref={mrpInputRef} type="text" inputMode="numeric" value={mrpPrompt.value} onChange={e => setMrpPrompt(s => ({ ...s, value: e.target.value, error: null }))} onKeyDown={e => {
                 if (e.key === 'Enter') {
                   e.preventDefault()

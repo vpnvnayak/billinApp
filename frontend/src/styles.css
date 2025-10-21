@@ -119,10 +119,6 @@ body { font-family: 'Outfit', Inter, 'Segoe UI', Roboto, Arial, Helvetica, sans-
 /* Prevent links from expanding to the full 100% width in expanded mode so icon+label block remains compact */
 .sidenav:not(.collapsed) .sidenav-nav a { width: auto; padding-left: 6px; padding-right: 12px }
 .sidenav:not(.collapsed) .sidenav-nav .icon { margin-right: 12px }
-.sidenav .submenu { list-style: none; margin: 6px 0 6px 60px; padding: 6px 0; display: none }
-.sidenav .submenu.open { display: block }
-.sidenav .submenu li a { display: block; padding: 6px 8px; border-radius: 8px; color: rgba(255,255,255,0.9); font-weight: 600 }
-.sidenav .submenu li a:hover { background: rgba(255,255,255,0.03) }
 /* Tooltip for collapsed icons */
 .sidenav-nav a { position: relative }
 /* Collapsed nav tooltip: hidden by default (opacity 0 + slight left offset),
