@@ -214,5 +214,47 @@ router.put('/:id', async (req, res) => {
   }
 })
 
+// PUT /api/products/variants/:id - update a product variant (variant-specific fields only)
+router.put('/variants/:id', async (req, res) => {
+  const { id } = req.params
+  const { mrp, price, unit, tax_percent, stock, barcode } = req.body || {}
+  if (!Number.isInteger(Number(id))) return res.status(400).json({ error: 'invalid id' })
+  try {
+    if (!process.env.DATABASE_URL) return res.status(400).json({ error: 'no database' })
+  const storeId = req.user && req.user.store_id ? req.user.store_id : null
+
+    // Use explicit undefined checks to allow zero/null values
+    const mrpVal = (mrp === undefined) ? null : mrp
+    const priceVal = (price === undefined) ? null : price
+    const unitVal = (unit === undefined) ? null : unit
+    const taxVal = (tax_percent === undefined) ? 0 : tax_percent
+    const stockVal = (stock === undefined) ? 0 : stock
+    const barcodeVal = (barcode === undefined) ? null : barcode
+
+    let result
+    if (storeId) {
+      // ensure variant belongs to a product in this store
+      result = await db.query(
+        `UPDATE product_variants pv
+         SET mrp=$1, price=$2, unit=$3, tax_percent=$4, stock=$5, barcode=$6
+         FROM products p
+         WHERE pv.product_id = p.id AND pv.id = $7 AND p.store_id = $8
+         RETURNING pv.id, pv.product_id, pv.mrp, pv.price, pv.unit, pv.tax_percent, pv.stock, pv.barcode`,
+        [mrpVal, priceVal, unitVal, taxVal, stockVal, barcodeVal, id, storeId]
+      )
+    } else {
+      result = await db.query(
+        `UPDATE product_variants SET mrp=$1, price=$2, unit=$3, tax_percent=$4, stock=$5, barcode=$6 WHERE id=$7 RETURNING id, product_id, mrp, price, unit, tax_percent, stock, barcode`,
+        [mrpVal, priceVal, unitVal, taxVal, stockVal, barcodeVal, id]
+      )
+    }
+    if (!result || !result.rows || result.rows.length === 0) return res.status(404).json({ error: 'Not found' })
+    res.json(result.rows[0])
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
 module.exports = router;
 

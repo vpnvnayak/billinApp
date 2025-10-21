@@ -100,8 +100,44 @@ router.post('/', async (req, res) => {
       // loyalty_used is points the customer chooses to spend (1 point == 1 Rs)
       const loyaltyUsed = (payment_breakdown && Number(payment_breakdown.loyalty_used)) ? Math.max(0, Math.floor(Number(payment_breakdown.loyalty_used))) : 0
 
-      // Attach loyalty info to metadata for easier audit
-      const metadataWithLoyalty = Object.assign({}, payment_breakdown || {}, { loyalty_awarded: awardPoints, loyalty_used: loyaltyUsed })
+      // Compute paid amount from payment_breakdown (card/cash/upi). Default to 0 when missing.
+      const paidAmount = (payment_breakdown ? (Number(payment_breakdown.card||0) + Number(payment_breakdown.cash||0) + Number(payment_breakdown.upi||0)) : 0)
+
+      // Payable: grand total (use grand as computed). Payment and loyalty interplay:
+      // Deduct requested loyalty_used first (clamped to available). Then if paidAmount + requested < grand, auto-apply remaining loyalty up to deficit.
+      let totalLoyaltyUsed = 0
+      const metadataWithLoyalty = Object.assign({}, payment_breakdown || {}, { loyalty_awarded: awardPoints, loyalty_used: 0 })
+      if (safeUserId) {
+        try {
+          // Attempt to lock and read customer's loyalty_points. If column missing this will throw and be caught.
+          const cres = await client.query('SELECT COALESCE(loyalty_points,0) AS loyalty_points FROM customers WHERE id = $1 FOR UPDATE', [safeUserId])
+          let avail = Number((cres.rows[0] && cres.rows[0].loyalty_points) || 0)
+          // Deduct requested loyalty_used (clamped)
+          const requested = Math.max(0, Math.floor(Number(loyaltyUsed || 0)))
+          const deductRequested = Math.min(avail, requested)
+          if (deductRequested > 0) {
+            await client.query('UPDATE customers SET loyalty_points = GREATEST(coalesce(loyalty_points,0) - $1, 0) WHERE id = $2', [deductRequested, safeUserId])
+            avail -= deductRequested
+          }
+          totalLoyaltyUsed = deductRequested
+
+            // If still unpaid after paidAmount + requested, and there was some paid amount, auto-apply remaining loyalty up to deficit
+            const paidPlusRequested = Number(paidAmount || 0) + totalLoyaltyUsed
+            if ((Number(paidAmount || 0) > 0) && paidPlusRequested < Number(grand || 0) && avail > 0) {
+            const deficit = Math.max(0, Number(grand || 0) - paidPlusRequested)
+            const autoToUse = Math.min(avail, Math.max(0, Math.floor(deficit)))
+            if (autoToUse > 0) {
+              await client.query('UPDATE customers SET loyalty_points = GREATEST(coalesce(loyalty_points,0) - $1, 0) WHERE id = $2', [autoToUse, safeUserId])
+              totalLoyaltyUsed += autoToUse
+              avail -= autoToUse
+            }
+          }
+          // For audit we keep metadata.loyalty_used as requested by client (may be more than actually deducted).
+          metadataWithLoyalty.loyalty_used = loyaltyUsed
+        } catch (e) {
+          console.error('Failed auto/apply loyalty', e)
+        }
+      }
 
       const saleRes = await client.query(
         'INSERT INTO sales (user_id, subtotal, tax_total, grand_total, payment_method, metadata, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
@@ -116,15 +152,18 @@ router.post('/', async (req, res) => {
         const line_total = Number(it.qty || 0) * Number(it.price || 0)
         const pid = v.isValidInt32(it.product_id) ? Number(it.product_id) : null
         try {
+          const taxPercentVal = Number(it.tax_percent || 0)
+          const qtyVal = Number(it.qty || 0)
+          const priceVal = Number(it.price || 0)
           if (saleItemsHasStore && storeId) {
             await client.query(
               'INSERT INTO sale_items (sale_id, product_id, sku, name, qty, price, tax_percent, line_total, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-              [saleId, pid, it.sku || null, it.name || null, it.qty || 0, it.price || 0, it.tax_percent || 0, line_total.toFixed(2), storeId]
+              [saleId, pid, it.sku || null, it.name || null, qtyVal, priceVal, taxPercentVal, line_total.toFixed(2), storeId]
             )
           } else {
             await client.query(
               'INSERT INTO sale_items (sale_id, product_id, sku, name, qty, price, tax_percent, line_total) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-              [saleId, pid, it.sku || null, it.name || null, it.qty || 0, it.price || 0, it.tax_percent || 0, line_total.toFixed(2)]
+              [saleId, pid, it.sku || null, it.name || null, qtyVal, priceVal, taxPercentVal, line_total.toFixed(2)]
             )
           }
         } catch (e) {
@@ -132,28 +171,34 @@ router.post('/', async (req, res) => {
           throw e
         }
       }
-
-      // If a customer (user_id) is associated, update their loyalty points atomically
+      // If a customer (user_id) is associated, award loyalty points (and ensure any auto loyalty was recorded above).
+      // Also handle credit: if paidAmount + totalLoyaltyUsed < grand and customer exists, add the remaining amount to customers.credit_due
       if (safeUserId) {
         try {
-          // ensure customers table has loyalty_points column; fail gracefully if missing
+          // award points
           const hasLoyaltyCol = schemaCache.hasColumn('customers', 'loyalty_points')
-          if (hasLoyaltyCol) {
-            // Deduct used points first (if any), then add awarded points
-            if (loyaltyUsed > 0) {
-              // decrement but not below zero
-              await client.query('UPDATE customers SET loyalty_points = GREATEST(coalesce(loyalty_points,0) - $1, 0) WHERE id = $2', [loyaltyUsed, safeUserId])
-            }
-            if (awardPoints > 0) {
-              await client.query('UPDATE customers SET loyalty_points = coalesce(loyalty_points,0) + $1 WHERE id = $2', [awardPoints, safeUserId])
-            }
+          if (hasLoyaltyCol && awardPoints > 0) {
+            await client.query('UPDATE customers SET loyalty_points = coalesce(loyalty_points,0) + $1 WHERE id = $2', [awardPoints, safeUserId])
+          }
+
+          // compute remaining unpaid after payments and loyalty
+          const paidPlusLoyalty = Number(paidAmount || 0) + Number(totalLoyaltyUsed || 0)
+          const deficit = Math.max(0, Number(grand || 0) - paidPlusLoyalty)
+          const hasCreditCol = schemaCache.hasColumn('customers', 'credit_due')
+          if (deficit > 0 && hasCreditCol) {
+            // increment customer's credit_due
+            await client.query('UPDATE customers SET credit_due = coalesce(credit_due,0) + $1 WHERE id = $2', [deficit.toFixed(2), safeUserId])
+            // also annotate metadata with credit added for audit
+            metadataWithLoyalty.credit_added = (metadataWithLoyalty.credit_added || 0) + deficit
+            // update the sales metadata to include credit_added
+            await client.query('UPDATE sales SET metadata = $1 WHERE id = $2', [metadataWithLoyalty || null, saleId])
           }
         } catch (e) {
-          console.error('Failed updating customer loyalty points', e)
+          console.error('Failed updating customer loyalty/credit', e)
           // not fatal: continue
         }
       }
-      return { status: 201, json: { id: saleId, loyalty_awarded: awardPoints, loyalty_used: loyaltyUsed } }
+  return { status: 201, json: { id: saleId, loyalty_awarded: awardPoints, loyalty_used: (loyaltyUsed || 0) } }
     }, { route: 'sales.create' })
 
     if (result && result.status) {

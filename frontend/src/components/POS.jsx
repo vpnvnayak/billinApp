@@ -70,11 +70,8 @@ export default function POS() {
           e.preventDefault()
           if (selectedIndex >= 0 && displayResults[selectedIndex]) {
             const dr = displayResults[selectedIndex]
-            if (dr.group && dr.group.length > 1) {
-              setMrpPrompt({ group: dr.group, sku: String(dr.item.sku || ''), value: '' })
-            } else {
-              addProduct(dr.item)
-            }
+            // when selecting from suggestions, always confirm variants from server
+            checkVariantsAndPrompt(dr.item)
           }
         }
       }
@@ -90,8 +87,13 @@ export default function POS() {
     if (e.key !== 'Enter') return
     e.preventDefault()
     // if UI already has a selected result, use it
-    if (selectedIndex >= 0 && results[selectedIndex]) {
-      addProduct(results[selectedIndex])
+    if (selectedIndex >= 0 && displayResults[selectedIndex]) {
+      const dr = displayResults[selectedIndex]
+      if (dr.group && dr.group.length > 1) {
+        setMrpPrompt({ group: dr.group, sku: String(dr.item.sku || ''), value: '' })
+      } else {
+        addProduct(dr.item)
+      }
       return
     }
     const q = (query || '').trim()
@@ -106,12 +108,9 @@ export default function POS() {
       if (items.length > 0) {
         const exactKey = q.toLowerCase()
         const matched = items.filter(it => String(it.sku || '').toLowerCase() === exactKey)
-        if (matched.length > 1) {
-          setMrpPrompt({ group: matched, sku: q, value: '' })
-        } else {
-          const exact = matched[0] || items[0]
-          addProduct(exact)
-        }
+        const exact = matched[0] || items[0]
+        // always verify with server whether multiple variants exist
+        await checkVariantsAndPrompt(exact)
       } else {
         import('../services/ui').then(m => m.showSnackbar('Product not found'))
       }
@@ -141,6 +140,43 @@ export default function POS() {
         setCustomers([])
       }
     } catch (e) { console.error('failed to load customers', e); setCustomers([]) }
+  }
+
+  // Helper: given a product-like item (from /pos/products result), ask backend for all variants for the SKU
+  // If multiple variants are present, open the mrp prompt. If a single variant or variant_id present, add that variant directly.
+  async function checkVariantsAndPrompt(item) {
+    try {
+      const sku = String(item.sku || '')
+      if (!sku) { addProduct(item); return }
+      // Query pos/products with the sku to get all matching rows (variants preferred by backend)
+      const r = await api.get('/pos/products', { params: { query: sku, limit: 50 } })
+      const items = r.data || []
+      // filter exact sku matches
+      const matched = items.filter(it => String(it.sku || '').toLowerCase() === sku.toLowerCase())
+      if (matched.length === 0) {
+        // fallback: add the original item
+        addProduct(item)
+        return
+      }
+      // If any matched item includes variant_id and there is exactly one unique mrp, add that
+      // treat numerically-equal MRPs as the same (e.g. 30 and 30.00)
+      const uniqueMrps = Array.from(new Set(matched.map(m => {
+        if (m.mrp == null || m.mrp === '') return '__NULL__'
+        const n = Number(String(m.mrp).replace(/,/g, '').trim())
+        return Number.isFinite(n) ? String(n) : String(m.mrp)
+      }))).filter(x => x !== '__NULL__')
+      if (matched.length === 1 || uniqueMrps.length === 1) {
+        // prefer the first matched (should have variant_id if variant exists)
+        addProduct(matched[0])
+      } else {
+        // multiple MRPs available -> prompt cashier to type exact MRP
+        setMrpPrompt({ group: matched, sku, value: '' })
+      }
+    } catch (e) {
+      console.error('variant check failed', e)
+      // fallback: add item
+      addProduct(item)
+    }
   }
 
   useEffect(() => {
@@ -235,12 +271,15 @@ export default function POS() {
 
   function addProduct(p) {
     setCart(c => {
-      // if same product (by id) exists, increment its qty instead of adding a new line
-      const existing = c.find(it => it.id === p.id)
+      // use a cartId that includes variant_id when present so different variants
+      // of the same product are separate lines. Keep numeric `id` as product_id
+      // for payloads so backend receives product_id and optional variant_id.
+      const cartId = `${p.id}:${p.variant_id || 'm'}`
+      const existing = c.find(it => it.cartId === cartId)
       if (existing) {
-        return c.map(it => it.id === p.id ? { ...it, qty: Number(it.qty || 0) + 1 } : it)
+        return c.map(it => it.cartId === cartId ? { ...it, qty: Number(it.qty || 0) + 1 } : it)
       }
-      const item = { ...p, qty: 1 }
+      const item = { ...p, qty: 1, cartId }
       return [...c, item]
     })
     setQuery('')
@@ -250,11 +289,11 @@ export default function POS() {
   }
 
   // Cart editing helpers
-  function updateCartItem(id, patch) {
-    setCart(c => c.map(it => it.id === id ? { ...it, ...patch } : it))
+  function updateCartItem(cartId, patch) {
+    setCart(c => c.map(it => it.cartId === cartId ? { ...it, ...patch } : it))
   }
-  function removeCartItem(id) {
-    setCart(c => c.filter(it => it.id !== id))
+  function removeCartItem(cartId) {
+    setCart(c => c.filter(it => it.cartId !== cartId))
   }
 
   // Create a local customer (temporary, client-side). In a real app you'd POST to /customers.
@@ -334,7 +373,7 @@ export default function POS() {
         const taxRate = (Number(it.tax_percent) || 0) / 100.0
         const priceInclusive = Number(it.price) || 0
         const unitExclusive = taxRate > 0 ? (priceInclusive / (1 + taxRate)) : priceInclusive
-        return ({ product_id: safeInt32(it.id), sku: it.sku, name: it.name, qty: it.qty, price: Number(unitExclusive.toFixed(2)), tax_percent: it.tax_percent })
+        return ({ product_id: safeInt32(it.id), variant_id: it.variant_id || null, mrp: it.mrp != null ? Number(it.mrp) : null, sku: it.sku, name: it.name, qty: it.qty, price: Number(unitExclusive.toFixed(2)), tax_percent: it.tax_percent })
       }),
       payment_method: payMethod,
       payment_breakdown: { card: Number(cardAmount)||0, cash: Number(cashGiven)||0, upi: Number(upiAmount)||0, discount_percent: Number(discountPercent)||0, discount_rs: Number(discountRs)||0, loyalty_used: Number(applyLoyaltyPoints)||0, remarks: remarks || '' },
@@ -534,7 +573,7 @@ export default function POS() {
                     else addProduct(dr.item)
                   }}>
                   <div className="r-sku">{dr.item.sku}</div>
-                  <div className="r-name">{dr.item.name}{dr.group && dr.group.length > 1 ? ` (${dr.group.length} MRPs)` : ''}</div>
+                     <div className="r-name">{dr.item.name}</div>
                 </div>
               ))}
             </div>
@@ -554,19 +593,19 @@ export default function POS() {
                 <tbody>
                   {cart.length === 0 && <tr><td colSpan={8}>No Products Added For Selling...</td></tr>}
                   {cart.map((it, i) => (
-                    <tr key={it.id}>
+                    <tr key={it.cartId}>
                       <td>{i+1}</td>
                       <td>{it.name}</td>
                       <td>
-                        <input type="number" min="0" value={it.qty} onChange={e => updateCartItem(it.id, { qty: Number(e.target.value) })} className="small-input" />
+                        <input type="number" min="0" value={it.qty} onChange={e => updateCartItem(it.cartId, { qty: Number(e.target.value) })} className="small-input" />
                       </td>
                       <td>{it.mrp != null ? it.mrp : '-'}</td>
                       <td>{it.tax_percent}%</td>
                       <td>
-                        <input type="number" min="0" step="0.01" value={it.price} onChange={e => updateCartItem(it.id, { price: Number(e.target.value) })} className="small-input" />
+                        <input type="number" min="0" step="0.01" value={it.price} onChange={e => updateCartItem(it.cartId, { price: Number(e.target.value) })} className="small-input" />
                       </td>
                       <td>{(Number(it.qty || 0) * Number(it.price || 0)).toFixed(2)}</td>
-                      <td><button className="btn btn-ghost" onClick={() => removeCartItem(it.id)}>Remove</button></td>
+                      <td><button className="btn btn-ghost" onClick={() => removeCartItem(it.cartId)}>Remove</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -706,19 +745,26 @@ export default function POS() {
 
       {mrpPrompt && (
         <div className="modal-overlay">
-          <div className="modal">
-            <h3>Enter MRP for {mrpPrompt.sku}</h3>
-            <div style={{ marginBottom: 8 }}>
-              <label>Enter MRP</label>
+          <div className="modal" style={{ maxWidth: 520 }}>
+            <h3 style={{ marginBottom: 8 }}>Select MRP for {mrpPrompt.sku} — {mrpPrompt.group && mrpPrompt.group[0] && mrpPrompt.group[0].name}</h3>
+            <div>
+              <label>Enter MRP for {mrpPrompt.sku} ({mrpPrompt.group && mrpPrompt.group[0] && mrpPrompt.group[0].name})</label>
               <input ref={mrpInputRef} type="text" inputMode="numeric" value={mrpPrompt.value} onChange={e => setMrpPrompt(s => ({ ...s, value: e.target.value, error: null }))} onKeyDown={e => {
                 if (e.key === 'Enter') {
                   e.preventDefault()
                   const valRaw = mrpPrompt.value == null ? '' : String(mrpPrompt.value)
                   const val = valRaw.replace(/,/g, '').trim()
                   if (!val) { setMrpPrompt(s => ({ ...s, error: 'Enter MRP' })); return }
+                  const valNum = Number(val)
                   const match = mrpPrompt.group.find(p => {
-                    const pm = p.mrp == null ? '' : String(p.mrp).replace(/,/g, '').trim()
-                    return pm !== '' && pm === val
+                    const pmRaw = p.mrp == null ? '' : String(p.mrp).replace(/,/g, '').trim()
+                    const pmNum = Number(pmRaw)
+                    if (Number.isFinite(pmNum) && Number.isFinite(valNum)) {
+                      // numeric comparison tolerant to trailing .00
+                      return Math.abs(pmNum - valNum) < 0.0001
+                    }
+                    // fallback to exact string match
+                    return pmRaw !== '' && pmRaw === val
                   })
                   if (match) {
                     addProduct(match)
@@ -729,24 +775,29 @@ export default function POS() {
                 }
               }} />
               {mrpPrompt.error ? <div style={{ color: 'var(--color-danger)', marginTop: 6 }}>{mrpPrompt.error}</div> : null}
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="btn" onClick={() => {
-                const valRaw = mrpPrompt.value == null ? '' : String(mrpPrompt.value)
-                const val = valRaw.replace(/,/g, '').trim()
-                if (!val) { setMrpPrompt(s => ({ ...s, error: 'Enter MRP' })); return }
-                const match = mrpPrompt.group.find(p => {
-                  const pm = p.mrp == null ? '' : String(p.mrp).replace(/,/g, '').trim()
-                  return pm !== '' && pm === val
-                })
-                if (match) {
-                  addProduct(match)
-                  setMrpPrompt(null)
-                } else {
-                  setMrpPrompt(s => ({ ...s, error: 'No product with matching MRP found' }))
-                }
-              }}>OK</button>
-              <button className="btn btn-ghost" onClick={() => setMrpPrompt(null)}>Cancel</button>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                <button className="btn" onClick={() => {
+                  const valRaw = mrpPrompt.value == null ? '' : String(mrpPrompt.value)
+                  const val = valRaw.replace(/,/g, '').trim()
+                  if (!val) { setMrpPrompt(s => ({ ...s, error: 'Enter MRP' })); return }
+                  const valNum = Number(val)
+                  const match = mrpPrompt.group.find(p => {
+                    const pmRaw = p.mrp == null ? '' : String(p.mrp).replace(/,/g, '').trim()
+                    const pmNum = Number(pmRaw)
+                    if (Number.isFinite(pmNum) && Number.isFinite(valNum)) {
+                      return Math.abs(pmNum - valNum) < 0.0001
+                    }
+                    return pmRaw !== '' && pmRaw === val
+                  })
+                  if (match) {
+                    addProduct(match)
+                    setMrpPrompt(null)
+                  } else {
+                    setMrpPrompt(s => ({ ...s, error: 'No product with matching MRP found' }))
+                  }
+                }}>OK</button>
+                <button className="btn btn-ghost" onClick={() => setMrpPrompt(null)}>Cancel</button>
+              </div>
             </div>
           </div>
         </div>

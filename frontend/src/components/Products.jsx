@@ -163,13 +163,14 @@ export default function Products() {
                     <tr key={`v-${v.id}`} className="variant-row">
                       <td></td>
                       <td style={{ paddingLeft: 24 }}>{p.sku}</td>
-                      <td>Variant: {v.mrp == null ? '(no MRP)' : v.mrp}</td>
+                      {/* show the product's exact name from master; variant only changes MRP/price/stock */}
+                      <td>{p.name}</td>
                       <td>{v.mrp == null ? '' : v.mrp}</td>
                       <td>{v.price ?? ''}</td>
                       <td>{v.tax_percent != null ? `${v.tax_percent}%` : ''}</td>
                       <td>{v.stock ?? 0}</td>
                       <td>{v.unit ?? ''}</td>
-                      <td><button className="btn small" onClick={() => setEditing(Object.assign({}, p, { variant_id: v.id }))}>Edit</button></td>
+                      <td><button className="btn small" onClick={() => setEditing(Object.assign({}, p, { variant_id: v.id, mrp: v.mrp, price: v.price, tax_percent: v.tax_percent, stock: v.stock, unit: v.unit, barcode: v.barcode }))}>Edit</button></td>
                     </tr>
                   ))}
                 </React.Fragment>
@@ -216,13 +217,18 @@ function ProductModal({ onClose, onCreated, product }) {
     setSaving(true)
     try {
       if (product && product.id) {
-        await api.put(`/products/${product.id}`, { name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock })
+        // If editing a variant (variant_id present), call variant update endpoint
+        if (product.variant_id) {
+          await api.put(`/products/variants/${product.variant_id}`, { mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock, barcode: sku || null })
+        } else {
+          await api.put(`/products/${product.id}`, { name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock })
+        }
       } else {
         await api.post('/products', { name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock })
       }
       if (onCreated) await onCreated()
     } catch (err) {
-      setError(product ? 'Failed to update product' : 'Failed to create product')
+      setError(product ? 'Failed to update product/variant' : 'Failed to create product')
     } finally {
       setSaving(false)
     }

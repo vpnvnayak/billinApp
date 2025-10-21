@@ -32,7 +32,7 @@ router.get('/', async (req, res) => {
     }
     const offset = (page - 1) * limit
     // Use window function to get total count in same query
-  const sql = `SELECT id, name, phone, email, created_at, loyalty_points, COUNT(*) OVER() AS total_count FROM customers ${where} ORDER BY id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
+  const sql = `SELECT id, name, phone, email, created_at, loyalty_points, COALESCE(credit_due,0)::numeric(14,2) AS credit_due, COUNT(*) OVER() AS total_count FROM customers ${where} ORDER BY id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
     params.push(limit, offset)
     const r = await db.query(sql, params)
     const total = r.rows.length ? Number(r.rows[0].total_count || 0) : 0
