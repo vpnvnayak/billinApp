@@ -63,6 +63,7 @@ body { font-family: 'Outfit', Inter, 'Segoe UI', Roboto, Arial, Helvetica, sans-
 .btn.active { background: var(--color-primary-600) }
 .role-chip { display: inline-block; background: rgba(6,182,212,0.08); border: 1px solid rgba(6,182,212,0.18); padding: 4px 8px; margin-right: 6px; border-radius: 999px; color: #044 }
 .role-chip .x { background: transparent; border: none; color: #c00; margin-left: 6px; cursor: pointer }
+.badge-repack { display: inline-block; padding: 2px 6px; background: #e6ffed; color: #0b6623; border-radius: 10px; font-size: 11px; font-weight: 700; }
 .lc-toggle { display: inline-flex; align-items: center; gap: 8px }
 .lc-toggle input { display: none }
 .lc-toggle span { padding: 4px 8px; border-radius: 12px; background: #eee }

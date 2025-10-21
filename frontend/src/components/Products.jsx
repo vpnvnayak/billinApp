@@ -7,6 +7,7 @@ import PaginationFooter from './ui/PaginationFooter'
 export default function Products() {
   const [products, setProducts] = useState([])
   const [query, setQuery] = useState('')
+  const [repackOnly, setRepackOnly] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -63,6 +64,7 @@ export default function Products() {
     const q = (query || '').trim().toLowerCase()
     let res = products
     if (q) res = products.filter(p => String(p.sku).toLowerCase().includes(q) || (p.name || '').toLowerCase().includes(q))
+    if (repackOnly) res = res.filter(p => !!p.is_repacking)
     const start = ((page || 1) - 1) * (entries || 10)
     return res.slice(start, start + (entries || 10))
   })()
@@ -74,7 +76,11 @@ export default function Products() {
           <MagnifyingGlassIcon style={{ width: 18, height: 18 }} aria-hidden />
           <input placeholder="Search SKU or name" value={query} onChange={e => setQuery(e.target.value)} />
         </div>
-        <div className="page-header-actions">
+        <div className="page-header-actions" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <label className="lc-toggle" style={{ cursor: 'pointer' }} onClick={() => setRepackOnly(v => !v)}>
+            <input type="checkbox" checked={repackOnly} readOnly />
+            <span className={repackOnly ? 'active' : 'inactive'} style={{ padding: '6px 8px', borderRadius: 8 }}>{repackOnly ? 'Repack: On' : 'Repack: Off'}</span>
+          </label>
           <button className="btn small" onClick={() => setShowCreate(true)}>
             <PlusIcon style={{ width: 14, height: 14, marginRight: 8 }} aria-hidden /> Add product
           </button>
@@ -137,6 +143,7 @@ export default function Products() {
                 <th>Tax %</th>
                 <th>Stock</th>
                 <th>Unit</th>
+                <th>Repack</th>
                 <th>Action</th>
               </tr>
             </thead>
@@ -157,6 +164,7 @@ export default function Products() {
                     <td>{p.tax_percent != null ? `${p.tax_percent}%` : ''}</td>
                     <td>{p.stock ?? 0}</td>
                     <td>{p.unit ?? ''}</td>
+                    <td style={{ textAlign: 'center' }}>{p.is_repacking ? <span className="badge-repack">Yes</span> : ''}</td>
                     <td><button className="btn small" onClick={() => setEditing(p)}>Edit</button></td>
                   </tr>
                   {expanded[p.id] && (variantsMap[p.id] || []).map((v, vi) => (
@@ -170,7 +178,8 @@ export default function Products() {
                       <td>{v.tax_percent != null ? `${v.tax_percent}%` : ''}</td>
                       <td>{v.stock ?? 0}</td>
                       <td>{v.unit ?? ''}</td>
-                      <td><button className="btn small" onClick={() => setEditing(Object.assign({}, p, { variant_id: v.id, mrp: v.mrp, price: v.price, tax_percent: v.tax_percent, stock: v.stock, unit: v.unit, barcode: v.barcode }))}>Edit</button></td>
+                      <td></td>
+                        <td><button className="btn small" onClick={() => setEditing(Object.assign({}, p, { variant_id: v.id, mrp: v.mrp, price: v.price, tax_percent: v.tax_percent, stock: v.stock, unit: v.unit, barcode: v.barcode }))}>Edit</button></td>
                     </tr>
                   ))}
                 </React.Fragment>
@@ -186,12 +195,12 @@ export default function Products() {
 
       {/* Create product modal */}
       {showCreate && (
-        <ProductModal onClose={() => setShowCreate(false)} onCreated={async () => { setShowCreate(false); await fetchProducts() }} />
+        <ProductModal onClose={() => setShowCreate(false)} onCreated={async (created) => { setShowCreate(false); if (created && created.id) { setProducts(ps => [created, ...ps]); } else { await fetchProducts() } }} />
       )}
 
       {/* Edit product modal */}
       {editing && (
-        <ProductModal product={editing} onClose={() => setEditing(null)} onCreated={async () => { setEditing(null); await fetchProducts() }} />
+        <ProductModal product={editing} onClose={() => setEditing(null)} onCreated={async (updated) => { setEditing(null); if (updated && updated.id) { setProducts(ps => ps.map(p => p.id === updated.id ? updated : p)); } else { await fetchProducts() } }} />
       )}
     </div>
   )
@@ -205,6 +214,7 @@ function ProductModal({ onClose, onCreated, product }) {
   const [unit, setUnit] = useState(product?.unit || 'KG')
   const [taxPercent, setTaxPercent] = useState(product?.tax_percent ?? 0)
   const [stock, setStock] = useState(product?.stock ?? 0)
+  const [isRepacking, setIsRepacking] = useState(product?.is_repacking ? true : false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const [skuExists, setSkuExists] = useState(false)
@@ -216,17 +226,22 @@ function ProductModal({ onClose, onCreated, product }) {
     if (skuExists) return setError('Barcode/SKU already exists')
     setSaving(true)
     try {
+      let r
       if (product && product.id) {
         // If editing a variant (variant_id present), call variant update endpoint
         if (product.variant_id) {
-          await api.put(`/products/variants/${product.variant_id}`, { mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock, barcode: sku || null })
+          r = await api.put(`/products/variants/${product.variant_id}`, { mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock, barcode: sku || null })
         } else {
-          await api.put(`/products/${product.id}`, { name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock })
+          r = await api.put(`/products/${product.id}`, { name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock, is_repacking: isRepacking })
         }
       } else {
-        await api.post('/products', { name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock })
+        r = await api.post('/products', { name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock, is_repacking: isRepacking })
       }
-      if (onCreated) await onCreated()
+      if (onCreated) {
+        // When backend returns the created/updated object, pass it to parent so UI can update immediately
+        if (r && r.data) await onCreated(r.data)
+        else await onCreated()
+      }
     } catch (err) {
       setError(product ? 'Failed to update product/variant' : 'Failed to create product')
     } finally {
@@ -297,6 +312,13 @@ function ProductModal({ onClose, onCreated, product }) {
         </div>
 
         <label className="field"><span className="field-label">Stock</span><input value={stock} onChange={e => setStock(Number(e.target.value))} type="number" min="0" /></label>
+
+        <label className="field">
+          <span className="field-label" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            Repacking item?
+            <input type="checkbox" style={{ width: 14, height: 14, margin: 0, verticalAlign: 'middle', transform: 'scale(0.92)' }} checked={isRepacking} onChange={e => setIsRepacking(!!e.target.checked)} />
+          </span>
+        </label>
 
         <div className="actions">
           <button className="btn cancel" onClick={onClose} disabled={saving}>Cancel</button>
