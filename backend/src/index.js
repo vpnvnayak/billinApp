@@ -101,11 +101,8 @@ app.use((req, res, next) => {
 	next()
 })
 
-// initialize schema cache once at startup (best-effort)
+// initialize schema cache module (the actual init is awaited at startup below)
 const schemaCache = require('./schemaCache')
-schemaCache.init().then(() => {
-	if (process.env.NODE_ENV !== 'test') console.log('schema cache initialized')
-}).catch(() => {})
 
 const productsRouter = require('./routes/products');
 const posRouter = require('./routes/pos');
@@ -155,11 +152,26 @@ const SSL_KEY = process.env.SSL_KEY_PATH;
 
 // If this module is the entry point, start the server. Otherwise export app for tests.
 if (require.main === module) {
-	// Try to initialize schema cache before accepting requests, but don't block startup indefinitely.
-	const initPromise = schemaCache.init()
-	const timeoutMs = Number(process.env.SCHEMA_CACHE_INIT_TIMEOUT_MS) || 5000
-	const timeout = new Promise((resolve) => setTimeout(resolve, timeoutMs))
-	Promise.race([initPromise, timeout]).then(() => {
+	(async function start() {
+		const maxWaitMs = Number(process.env.SCHEMA_CACHE_INIT_TIMEOUT_MS) || 30000
+		const pollInterval = 1000
+		const start = Date.now()
+		try {
+			// Attempt one init and then poll until cache.initialized or timeout
+			await schemaCache.init()
+			while (!schemaCache.cache.initialized && (Date.now() - start) < maxWaitMs) {
+				await new Promise((r) => setTimeout(r, pollInterval))
+				try { await schemaCache.init() } catch (e) { /* ignore and retry */ }
+			}
+			if (schemaCache.cache.initialized) {
+				if (process.env.NODE_ENV !== 'test') console.log('schema cache initialized')
+			} else {
+				console.warn(`schema cache not initialized after ${maxWaitMs}ms; starting server anyway`)
+			}
+		} catch (e) {
+			console.warn('schemaCache.init() failed during startup:', e && e.message)
+		}
+
 		if (SSL_CERT && SSL_KEY && fs.existsSync(SSL_CERT) && fs.existsSync(SSL_KEY)) {
 			const cert = fs.readFileSync(SSL_CERT);
 			const key = fs.readFileSync(SSL_KEY);
@@ -167,17 +179,7 @@ if (require.main === module) {
 		} else {
 			app.listen(PORT, () => console.log(`Backend listening on port ${PORT}`));
 		}
-	}).catch((e) => {
-		console.warn('schemaCache.init() failed during startup:', e && e.message)
-		// start anyway
-		if (SSL_CERT && SSL_KEY && fs.existsSync(SSL_CERT) && fs.existsSync(SSL_KEY)) {
-			const cert = fs.readFileSync(SSL_CERT);
-			const key = fs.readFileSync(SSL_KEY);
-			https.createServer({ key, cert }, app).listen(PORT, () => console.log(`Backend (HTTPS) listening on port ${PORT}`));
-		} else {
-			app.listen(PORT, () => console.log(`Backend listening on port ${PORT}`));
-		}
-	})
+	})()
 }
 
 // preserve backward-compatible default export (app) but also expose schemaCache for tests/tools

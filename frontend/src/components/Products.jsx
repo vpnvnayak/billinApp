@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import api from '../services/api'
+import generatePluContent from '../utils/pluExport'
 import { PlusIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import ListControls from './ui/ListControls'
 import PaginationFooter from './ui/PaginationFooter'
@@ -95,39 +96,22 @@ export default function Products() {
             className="btn small"
             onClick={() => {
               try {
-                const rows = filtered || []
-                if (!rows.length) return
-                const cols = ['product_id','sku','name','mrp','price','tax_percent','stock','unit','is_repacking']
-                const lines = [cols.join(',')]
-                for (const r of rows) {
-                  const vals = [
-                    r.store_seq ?? '',
-                    (r.sku || ''),
-                    (r.name || ''),
-                    (r.mrp == null ? '' : r.mrp),
-                    (r.price == null ? '' : r.price),
-                    (r.tax_percent == null ? '' : r.tax_percent),
-                    (r.stock == null ? '' : r.stock),
-                    (r.unit || ''),
-                    (r.is_repacking ? 'yes' : 'no')
-                  ]
-                  const esc = vals.map(v => '"' + String(v).replace(/"/g, '""') + '"')
-                  lines.push(esc.join(','))
-                }
-                const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+                const content = generatePluContent(products || [])
+                if (!content) return
+                const blob = new Blob([content], { type: 'text/plain;charset=utf-8;' })
                 const url = URL.createObjectURL(blob)
                 const a = document.createElement('a')
                 a.href = url
-                a.download = `products-${Date.now()}.csv`
+                a.download = 'PLU.txt'
                 document.body.appendChild(a)
                 a.click()
                 a.remove()
                 URL.revokeObjectURL(url)
               } catch (e) {
-                console.error('Export failed', e)
+                console.error('PLU export failed', e)
               }
             }}
-            title="Download weighing scale CSV"
+            title="Download weighing scale PLU"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -506,6 +490,8 @@ function ProductModal({ onClose, onCreated, product }) {
               style={{ width: 14, height: 14, margin: 0, verticalAlign: 'middle', transform: 'scale(0.92)' }}
               checked={isRepacking}
               onChange={e => setIsRepacking(!!e.target.checked)}
+              disabled={!!product && !!product.is_repacking}
+              title={product && product.is_repacking ? 'Repacking flag cannot be unset for this product' : ''}
             />
           </span>
         </label>

@@ -102,6 +102,65 @@ export default function POS() {
     clearTimeout(timer.current)
     try {
       setLoading(true)
+      // Special encoded barcode format: starts with '#'
+      // Format: #[6chars][5chars]..., where first 6 chars identify last-6 of SKU, next 5 chars encode quantity (qty = parseInt(next5)/1000)
+      if (q[0] === '#') {
+        const code = q.slice(1)
+        const sixRaw = code.slice(0, 6)
+        const fiveRaw = code.slice(6, 11)
+        // require at least the 6-char product id portion
+          if (sixRaw && sixRaw.length >= 1) {
+          // interpret first 6 chars as store-specific product id: trim leading zeros
+          let storeSeqStr = (sixRaw || '').toString().replace(/^0+/, '')
+          if (!storeSeqStr) storeSeqStr = '0'
+          // ask backend to return products for this store_seq when possible
+          const r = await api.get('/pos/products', { params: { store_seq: storeSeqStr, limit: 50 } })
+          const items = r.data || []
+          const targetDigits = (sixRaw || '').toString().replace(/\D/g, '')
+          const parsedItems = items.filter(it => {
+            const skuRaw = String(it.sku || it.barcode || '')
+            const digits = (skuRaw || '').toString().replace(/\D/g, '')
+            const skuLast6 = (digits && digits.length > 0) ? digits.slice(-6).padStart(6, '0') : String(skuRaw || '').slice(-6).padStart(6, '0')
+            if (targetDigits && targetDigits.length > 0) {
+              const tgt = targetDigits.padStart(6, '0')
+              return skuLast6 === tgt
+            }
+            // fallback compare raw substrings (case-insensitive)
+            return String(skuRaw || '').slice(-6).padStart(6, '0').toLowerCase() === String(sixRaw || '').padStart(6, '0').toLowerCase()
+          })
+          let exact = null
+          if (parsedItems.length > 0) {
+            exact = parsedItems[0]
+          } else {
+            // Looser fallback: try substring match on raw sku/barcode or match by store_seq
+            const loose = items.filter(it => {
+              const skuRaw = String(it.sku || it.barcode || '') || ''
+              if (skuRaw.toLowerCase().includes((sixRaw || '').toLowerCase())) return true
+              // numeric fallback: compare store_seq if present
+              if (it.store_seq != null && String(it.store_seq).padStart(6, '0') === String(sixRaw || '').padStart(6, '0')) return true
+              // compare digits as substring
+              const digits = (skuRaw || '').toString().replace(/\D/g, '')
+              if (digits && digits.includes((targetDigits || '').toString())) return true
+              return false
+            })
+            if (loose.length === 0) {
+              import('../services/ui').then(m => m.showSnackbar('Product not found'))
+              return
+            }
+            // use the first loose match
+            exact = loose[0]
+          }
+          // compute quantity from fiveRaw: interpret as integer over 1000
+          let qty = 1
+          if (fiveRaw && fiveRaw.length > 0) {
+            const n = parseInt(fiveRaw.replace(/\D/g, ''), 10)
+            if (!Number.isNaN(n)) qty = n / 1000
+          }
+          // verify variants and add product with qty
+          await checkVariantsAndPrompt(exact, qty)
+          return
+        }
+      }
       const r = await api.get('/pos/products', { params: { query: q, limit: 10 } })
       const items = r.data || []
       setResults(items)
@@ -144,7 +203,7 @@ export default function POS() {
 
   // Helper: given a product-like item (from /pos/products result), ask backend for all variants for the SKU
   // If multiple variants are present, open the mrp prompt. If a single variant or variant_id present, add that variant directly.
-  async function checkVariantsAndPrompt(item) {
+  async function checkVariantsAndPrompt(item, qty = 1) {
     try {
       const sku = String(item.sku || '')
       if (!sku) { addProduct(item); return }
@@ -154,8 +213,8 @@ export default function POS() {
       // filter exact sku matches
       const matched = items.filter(it => String(it.sku || '').toLowerCase() === sku.toLowerCase())
       if (matched.length === 0) {
-        // fallback: add the original item
-        addProduct(item)
+        // fallback: add the original item with qty
+        addProduct(item, qty)
         return
       }
       // If any matched item includes variant_id and there is exactly one unique mrp, add that
@@ -167,15 +226,15 @@ export default function POS() {
       }))).filter(x => x !== '__NULL__')
       if (matched.length === 1 || uniqueMrps.length === 1) {
         // prefer the first matched (should have variant_id if variant exists)
-        addProduct(matched[0])
+        addProduct(matched[0], qty)
       } else {
         // multiple MRPs available -> prompt cashier to type exact MRP
-        setMrpPrompt({ group: matched, sku, value: '' })
+        setMrpPrompt({ group: matched, sku, value: '', __qty: qty })
       }
     } catch (e) {
       console.error('variant check failed', e)
       // fallback: add item
-      addProduct(item)
+      addProduct(item, qty)
     }
   }
 
@@ -269,7 +328,8 @@ export default function POS() {
     }
   }, [])
 
-  function addProduct(p) {
+  function addProduct(p, qty = 1) {
+    const qnum = Number(qty) || 0
     setCart(c => {
       // use a cartId that includes variant_id when present so different variants
       // of the same product are separate lines. Keep numeric `id` as product_id
@@ -277,9 +337,9 @@ export default function POS() {
       const cartId = `${p.id}:${p.variant_id || 'm'}`
       const existing = c.find(it => it.cartId === cartId)
       if (existing) {
-        return c.map(it => it.cartId === cartId ? { ...it, qty: Number(it.qty || 0) + 1 } : it)
+        return c.map(it => it.cartId === cartId ? { ...it, qty: Number(it.qty || 0) + qnum } : it)
       }
-      const item = { ...p, qty: 1, cartId }
+      const item = { ...p, qty: qnum || 1, cartId }
       return [...c, item]
     })
     setQuery('')
@@ -768,7 +828,7 @@ export default function POS() {
                     return pmRaw !== '' && pmRaw === val
                   })
                   if (match) {
-                    addProduct(match)
+                    addProduct(match, mrpPrompt && mrpPrompt.__qty ? mrpPrompt.__qty : 1)
                     setMrpPrompt(null)
                   } else {
                     setMrpPrompt(s => ({ ...s, error: 'No product with matching MRP found' }))
@@ -791,7 +851,7 @@ export default function POS() {
                     return pmRaw !== '' && pmRaw === val
                   })
                   if (match) {
-                    addProduct(match)
+                    addProduct(match, mrpPrompt && mrpPrompt.__qty ? mrpPrompt.__qty : 1)
                     setMrpPrompt(null)
                   } else {
                     setMrpPrompt(s => ({ ...s, error: 'No product with matching MRP found' }))
