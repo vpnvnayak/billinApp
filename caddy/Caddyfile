@@ -1,0 +1,8 @@
+:80
+
+route /api/* {
+  reverse_proxy backend:4000
+}
+
+root * /usr/share/caddy
+file_server

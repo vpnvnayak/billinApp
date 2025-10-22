@@ -1,0 +1,16 @@
+{
+  "statusCode": 200,
+  "body": [
+    {
+      "id": 2139,
+      "sku": "SPI95418",
+      "name": "test product",
+      "store_seq": 4,
+      "price": "150.00",
+      "mrp": "190.00",
+      "unit": "KG",
+      "tax_percent": 12,
+      "stock": 10
+    }
+  ]
+}
