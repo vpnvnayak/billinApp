@@ -7,9 +7,8 @@ const schemaCache = require('../schemaCache')
 // GET /api/pos/products?query=&limit=
 router.get('/products', async (req, res) => {
   try {
-  const q = (req.query.query || '').trim()
-  const storeSeqParam = req.query.store_seq ? String(req.query.store_seq).trim() : null
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10))
+    const q = (req.query.query || '').trim()
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10))
 
   if (!Number.isInteger(limit) || limit <= 0) return res.status(400).json({ error: 'invalid limit' })
 
@@ -30,68 +29,8 @@ router.get('/products', async (req, res) => {
 
     const storeId = req.user && req.user.store_id ? req.user.store_id : null
 
-    // feature flags from schema cache
+    // If product_variants table exists, prefer returning variants (joined with product metadata)
     const hasVariants = schemaCache.hasColumn('product_variants', 'id')
-    const hasIsRepacking = schemaCache.hasColumn('products', 'is_repacking')
-
-    // If store_seq provided, prefer exact lookup by per-store sequence id
-    if (storeSeqParam) {
-      // helper to handle query and retry when is_repacking column unexpectedly missing
-      const runQueryWithOptionalIsRepacking = async (sqlBase, params, includeIsRep) => {
-        try {
-          return await db.query(sqlBase, params)
-        } catch (err) {
-          // If column missing, refresh schema cache and retry without the is_repacking filter
-          if (err && err.code === '42703') {
-            await schemaCache.init()
-            const retrySql = includeIsRep ? sqlBase.replace(/\s+AND\s+p\.is_repacking\s*=\s*true/gi, '') : sqlBase
-            return await db.query(retrySql, params)
-          }
-          throw err
-        }
-      }
-
-      if (hasVariants) {
-        let sql, params
-        if (storeId) {
-          sql = `SELECT pv.id AS variant_id, p.id AS product_id, p.sku, p.name, p.store_seq, COALESCE(pv.price, p.price) AS price, pv.mrp, COALESCE(pv.unit, p.unit) AS unit, COALESCE(pv.tax_percent, p.tax_percent) AS tax_percent, pv.stock FROM product_variants pv JOIN products p ON pv.product_id = p.id WHERE p.store_id = $1 AND p.store_seq::text = $2 ${hasIsRepacking ? 'AND p.is_repacking = true' : ''} LIMIT $3`
-          params = [storeId, storeSeqParam, limit]
-        } else {
-          sql = `SELECT pv.id AS variant_id, p.id AS product_id, p.sku, p.name, p.store_seq, COALESCE(pv.price, p.price) AS price, pv.mrp, COALESCE(pv.unit, p.unit) AS unit, COALESCE(pv.tax_percent, p.tax_percent) AS tax_percent, pv.stock FROM product_variants pv JOIN products p ON pv.product_id = p.id WHERE p.store_seq::text = $1 ${hasIsRepacking ? 'AND p.is_repacking = true' : ''} LIMIT $2`
-          params = [storeSeqParam, limit]
-        }
-        const r = await runQueryWithOptionalIsRepacking(sql, params, hasIsRepacking)
-        if (r.rows && r.rows.length > 0) {
-          const rows = r.rows.map(rr => ({ id: rr.product_id, variant_id: rr.variant_id, sku: rr.sku, name: rr.name, price: rr.price, mrp: rr.mrp, unit: rr.unit, tax_percent: rr.tax_percent, stock: rr.stock }))
-          return res.json(rows)
-        }
-        // otherwise fall through to try direct product lookup (product may exist without variants)
-      }
-
-      // no variants table — search products directly
-      try {
-        let sql = storeId
-          ? `SELECT id, sku, name, store_seq, price, mrp, unit, tax_percent, stock FROM products WHERE store_id = $1 AND store_seq::text = $2 ${hasIsRepacking ? 'AND is_repacking = true' : ''} LIMIT $3`
-          : `SELECT id, sku, name, store_seq, price, mrp, unit, tax_percent, stock FROM products WHERE store_seq::text = $1 ${hasIsRepacking ? 'AND is_repacking = true' : ''} LIMIT $2`
-        const params = storeId ? [storeId, storeSeqParam, limit] : [storeSeqParam, limit]
-        const r = await db.query(sql, params)
-        return res.json(r.rows.map(rr => ({ ...rr })))
-      } catch (err) {
-        if (err && err.code === '42703') {
-          // refresh schema cache and retry without is_repacking condition
-          await schemaCache.init()
-          const sql = storeId
-            ? `SELECT id, sku, name, price, mrp, unit, tax_percent, stock FROM products WHERE store_id = $1 AND store_seq::text = $2 LIMIT $3`
-            : `SELECT id, sku, name, price, mrp, unit, tax_percent, stock FROM products WHERE store_seq::text = $1 LIMIT $2`
-          const params = storeId ? [storeId, storeSeqParam, limit] : [storeSeqParam, limit]
-          const r2 = await db.query(sql, params)
-          return res.json(r2.rows.map(rr => ({ ...rr })))
-        }
-        throw err
-      }
-    }
-
-  // If product_variants table exists, prefer returning variants (joined with product metadata)
 
     if (!q) {
       if (hasVariants) {
@@ -101,7 +40,7 @@ router.get('/products', async (req, res) => {
         const params = storeId ? [storeId, limit] : [limit]
         const r = await db.query(sql, params)
         // normalize to same shape as previous API (id was product id) — keep id as product id but include mrp
-  const rows = r.rows.map(rr => ({ id: rr.product_id, variant_id: rr.variant_id, sku: rr.sku, name: rr.name, store_seq: rr.store_seq, price: rr.price, mrp: rr.mrp, unit: rr.unit, tax_percent: rr.tax_percent, stock: rr.stock }))
+        const rows = r.rows.map(rr => ({ id: rr.product_id, variant_id: rr.variant_id, sku: rr.sku, name: rr.name, price: rr.price, mrp: rr.mrp, unit: rr.unit, tax_percent: rr.tax_percent, stock: rr.stock }))
         return res.json(rows.slice(0, limit))
       }
 

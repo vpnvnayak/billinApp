@@ -55,13 +55,8 @@ router.get('/', async (req, res) => {
     try {
       result = await db.query(sql, params)
     } catch (err) {
-      // If the DB doesn't have the is_repacking column (e.g., migrations not applied), refresh schemaCache and retry without it.
+      // If the DB doesn't have the is_repacking column (e.g., migrations not applied), retry without it.
       if (err && err.code === '42703' && /is_repacking/.test(err.message || '')) {
-        try {
-          await schemaCache.init()
-        } catch (e) {
-          // ignore schema cache init errors
-        }
         const selectColsNo = 'id, sku, name, price, mrp, unit, tax_percent, stock, COUNT(*) OVER() AS total_count'
         // params already includes limit and offset at this point; compute their placeholder positions
         const sqlNo = `SELECT ${selectColsNo} FROM products ${where} ORDER BY id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`
@@ -221,7 +216,6 @@ router.post('/', async (req, res) => {
         )
       } catch (err) {
         if (err && err.code === '42703' && /is_repacking/.test(err.message || '')) {
-          try { await schemaCache.init() } catch (e) {}
           // fallback to insert without is_repacking column
           result = await db.query(
             'INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, sku, name, price, mrp, unit, tax_percent, stock',
@@ -244,12 +238,6 @@ router.post('/', async (req, res) => {
       if (created && created.store_seq === undefined) {
         const r2 = await db.query('SELECT store_seq FROM products WHERE id = $1', [created.id])
         if (r2 && r2.rows && r2.rows.length > 0) created.store_seq = r2.rows[0].store_seq
-      }
-      // If the INSERT did not include the is_repacking column in RETURNING (because migrations
-      // aren't applied yet or schemaCache was stale), provide the value the client sent so
-      // the API response reflects the requested state.
-      if (created && created.is_repacking === undefined) {
-        created.is_repacking = isRepackingVal === true ? true : false
       }
     } catch (e) {
       // ignore any error fetching store_seq and return what we have
@@ -311,34 +299,7 @@ router.put('/:id', async (req, res) => {
       if (dup.rows.length > 0) return res.status(400).json({ error: 'SKU/barcode with same MRP already exists' })
     }
 
-    let isRepackingVal = !!is_repacking
-    // Try to read the current is_repacking value from DB. If the column exists and
-    // the current value is true, reject attempts to explicitly unset it. If the
-    // column does not exist (missing column error), treat as if feature not present.
-    try {
-      const storeIdForCheck = req.user && req.user.store_id ? req.user.store_id : null
-      const existing = storeIdForCheck
-        ? await db.query('SELECT is_repacking FROM products WHERE id = $1 AND store_id = $2', [id, storeIdForCheck])
-        : await db.query('SELECT is_repacking FROM products WHERE id = $1', [id])
-      if (!existing || !existing.rows || existing.rows.length === 0) return res.status(404).json({ error: 'Not found' })
-      const cur = existing.rows[0].is_repacking
-      const curIsTrue = (cur === true || String(cur) === 't' || String(cur) === '1')
-      if (curIsTrue) {
-        // If the client explicitly tries to unset is_repacking (sends is_repacking: false),
-        // reject with 400. If the field is omitted, keep it true (no-op).
-        if (Object.prototype.hasOwnProperty.call(req.body || {}, 'is_repacking') && is_repacking === false) {
-          return res.status(400).json({ error: 'is_repacking cannot be unset once true' })
-        }
-        // once true, keep true regardless of incoming value or omission
-        isRepackingVal = true
-      }
-    } catch (e) {
-      // If the error indicates the column doesn't exist, ignore and proceed.
-      if (!(e && e.code === '42703')) {
-        // other DB errors should bubble up
-        console.error('Error checking is_repacking:', e)
-      }
-    }
+    const isRepackingVal = !!is_repacking
     let result
     if (schemaCache.hasColumn('products', 'is_repacking')) {
       try {
@@ -352,10 +313,9 @@ router.put('/:id', async (req, res) => {
             : [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, isRepackingVal, id]
         )
       } catch (err) {
-          if (err && err.code === '42703' && /is_repacking/.test(err.message || '')) {
-            try { await schemaCache.init() } catch (e) {}
-            // retry without is_repacking
-            result = await db.query(
+        if (err && err.code === '42703' && /is_repacking/.test(err.message || '')) {
+          // retry without is_repacking
+          result = await db.query(
             // only update if product belongs to store when scoped
             req.user && req.user.store_id
               ? 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7 WHERE id=$8 AND store_id=$9 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock'
