@@ -1,0 +1,13 @@
+{
+  "name": "spinner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2",
+    "qs": "^6.11.2"
+  }
+}
