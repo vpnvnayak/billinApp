@@ -10,13 +10,19 @@ on:
         type: string
         required: true
 
+# minimal perms + allow this workflow to trigger other actions if needed
 permissions:
   contents: read
   actions: write
 
+concurrency:
+  group: spin-${{ github.ref || inputs.branch }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout branch
         uses: actions/checkout@v4
@@ -33,36 +39,58 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
+          # if you use CRA, change next line to: npm run build && echo "DIST_DIR=frontend/build" >> $GITHUB_ENV
           npm run build
+          echo "DIST_DIR=frontend/dist" >> $GITHUB_ENV
 
       - name: Publish to Cloudflare Pages
         id: pages
         uses: cloudflare/pages-action@v1
+        continue-on-error: true
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          projectName: billinApp     # <-- set your Pages project name
-          directory: frontend/dist            # Vite output (change if CRA)
+          projectName: spin-branch            # <-- EXACT Pages project name (case-sensitive, usually lowercase)
+          directory: ${{ env.DIST_DIR }}
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Capture FE URL
-        run: echo "FE_URL=${{ steps.pages.outputs.url }}" >> $GITHUB_ENV
+      - name: Capture FE URL (if any)
+        run: |
+          echo "FE_URL=${{ steps.pages.outputs.url }}" >> $GITHUB_ENV
 
-      # ---------- BACKEND (stub; replace with your real deploy) ----------
+      # ---------- BACKEND (Render example; keep as stub until you wire IDs) ----------
       - name: Deploy backend to Render
+        if: ${{ secrets.RENDER_API_KEY != '' && secrets.RENDER_SERVICE_ID != '' }}
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
+          set -e
           curl -s -X POST \
             -H "Authorization: Bearer $RENDER_API_KEY" \
             -H "Content-Type: application/json" \
             https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys
-          # TODO: set BE_URL properly; using a placeholder here
+          # If you have a custom domain for the service, set it here instead:
           echo "BE_URL=https://$RENDER_SERVICE_ID.onrender.com" >> $GITHUB_ENV
+        continue-on-error: true
 
-      # ---------- SLACK NOTIFY ----------
-      - name: Notify Slack
+      - name: Default BE URL if not set
         run: |
-          curl -X POST -H "Content-type: application/json" "${{ inputs.response_url }}" \
-            -d "{\"text\":\"✅ *${{ inputs.branch }}* deployed!\\nFrontend: ${{ env.FE_URL }}\\nBackend: ${{ env.BE_URL }}\"}"
+          : "${BE_URL:=}"
+          echo "BE_URL=${BE_URL}" >> $GITHUB_ENV
+
+      # ---------- SLACK NOTIFY (always runs) ----------
+      - name: Notify Slack
+        if: always()
+        env:
+          SLACK_URL: ${{ inputs.response_url }}
+          STATUS: ${{ job.status }}
+          BRANCH: ${{ inputs.branch }}
+          FE_URL: ${{ env.FE_URL }}
+          BE_URL: ${{ env.BE_URL }}
+        run: |
+          FE_LINE=${FE_URL:+Frontend: $FE_URL\\n}
+          BE_LINE=${BE_URL:+Backend: $BE_URL\\n}
+          TEXT="*$BRANCH* status: *$STATUS*\\n${FE_LINE}${BE_LINE}"
+          curl -s -X POST -H "Content-type: application/json" "$SLACK_URL" \
+            -d "$(printf '{"text":"%s"}' "$TEXT")"
