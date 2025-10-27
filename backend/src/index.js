@@ -28,15 +28,35 @@ if (NODE_ENV === 'production') {
 
 const app = express();
 // Allow configurable origins via ALLOWED_ORIGINS (comma-separated). Defaults to localhost http/https dev ports.
-const allowed = (process.env.ALLOWED_ORIGINS && process.env.ALLOWED_ORIGINS.split(',')) || ['http://localhost:5173', 'https://localhost:5173'];
-app.use(cors({ origin: (origin, cb) => {
-	// allow non-browser requests with no origin
-	if (!origin) return cb(null, true);
-	if (allowed.indexOf(origin) !== -1) return cb(null, true);
-	// In development allow any localhost origin (any port) to avoid CORS issues with dev servers
-	if (NODE_ENV !== 'production' && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
-	return cb(new Error('Not allowed by CORS'));
-}, credentials: true }));
+const allowed = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+// Fallback: allow Render preview subdomains in non-prod if you want
+const extraDevPatterns = [
+  /\.onrender\.com$/i,   // any *.onrender.com
+  /^http:\/\/localhost(?::\d+)?$/i
+];
+
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin) return cb(null, true); // curl/postman/no-origin
+    if (allowed.includes(origin)) return cb(null, true);
+    // allow *.onrender.com and localhost in non-production if you like:
+    if (process.env.NODE_ENV !== 'production' &&
+        extraDevPatterns.some(rx => rx.test(origin))) {
+      return cb(null, true);
+    }
+    return cb(new Error('Not allowed by CORS: ' + origin));
+  },
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
+  credentials: true
+}));
+
+// VERY IMPORTANT: respond to preflight quickly
+app.options('*', cors());
 app.use(express.json());
 app.use(cookieParser());
 
