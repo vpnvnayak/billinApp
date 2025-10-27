@@ -1,0 +1,51 @@
+name: spin
+on:
+  workflow_dispatch:
+    inputs:
+      branch: { required: true, type: string }
+      response_url: { required: true, type: string }
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: ${{ inputs.branch }} }
+
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+
+      # --- FRONTEND ---
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          projectName: your-pages-project
+          directory: frontend/dist
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+        id: pages
+
+      - name: Save FE URL
+        run: echo "FE_URL=${{ steps.pages.outputs.url }}" >> $GITHUB_ENV
+
+      # --- BACKEND ---
+      - name: Deploy backend to Render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          curl -X POST "https://api.render.com/v1/services/YOUR_SERVICE_ID/deploys" \
+               -H "Authorization: Bearer $RENDER_API_KEY"
+          echo "BE_URL=https://yourapp.onrender.com" >> $GITHUB_ENV
+
+      # --- SLACK NOTIFY ---
+      - name: Notify Slack
+        run: |
+          curl -X POST -H "Content-type: application/json" "${{ inputs.response_url }}" \
+            -d "{\"text\":\"✅ *${{ inputs.branch }}* deployed!\\nFrontend: ${{ env.FE_URL }}\\nBackend: ${{ env.BE_URL }}\"}"
