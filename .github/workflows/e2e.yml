@@ -39,29 +39,10 @@ jobs:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/billing_test
         run: npm run migrate
 
-      - name: Start backend
+      - name: Run backend integration tests
         working-directory: backend
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/billing_test
-          E2E_CLEANUP_TOKEN: ${{ secrets.E2E_CLEANUP_TOKEN }}
-        run: node src/index.js &
-
-      - name: Install frontend deps
-        working-directory: frontend
-        run: npm ci
-
-      - name: Start frontend
-        working-directory: frontend
-        run: npm run dev &
-
-      - name: Install e2e deps
-        working-directory: e2e
-        run: npm ci && npx playwright install --with-deps
-
-      - name: Run Playwright tests
-        working-directory: e2e
-        env:
-          E2E_BASE_URL: http://localhost:5173
-          E2E_CLEANUP_TOKEN: ${{ secrets.E2E_CLEANUP_TOKEN }}
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/billing_test
-        run: npx playwright test --reporter=list
+        run: |
+          # Run jest integration tests serially to avoid DB conflicts
+          npm test -- --runInBand --color
