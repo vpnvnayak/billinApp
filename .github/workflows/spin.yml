@@ -1,0 +1,89 @@
+name: spin
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch: { required: true, type: string }
+      response_url: { required: true, type: string }
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # --- FRONTEND ---
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          projectName: your-pages-project
+          directory: frontend/dist
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+        id: pages
+
+      - name: Save FE URL
+        run: echo "FE_URL=${{ steps.pages.outputs.url }}" >> $GITHUB_ENV
+
+      # --- BACKEND ---
+      - name: Deploy backend to Render (trigger deploy + fetch URL)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -euo pipefail
+          SERVICE_ID="srv-d3vnp82li9vc73d0pki0"
+
+          echo "Triggering Render deploy for service: $SERVICE_ID"
+          # Trigger a deploy. Capture body and status code
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "https://api.render.com/v1/services/${SERVICE_ID}/deploys" \
+            -H "Authorization: Bearer ${RENDER_API_KEY}" \
+            -H "Accept: application/json" \
+            -d '{}')
+
+          HTTP=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          if [ "$HTTP" != "201" ] && [ "$HTTP" != "200" ]; then
+            echo "Render deploy failed with status $HTTP"
+            echo "Response body:"
+            echo "$BODY"
+            exit 1
+          fi
+
+          echo "Deploy triggered (status $HTTP). Retrieving service info to get domain..."
+          SVC_JSON=$(curl -s -H "Authorization: Bearer ${RENDER_API_KEY}" "https://api.render.com/v1/services/${SERVICE_ID}")
+
+          # Try to parse default domain using jq if available, otherwise fallback to node
+          if command -v jq >/dev/null 2>&1; then
+            DEFAULT_DOMAIN=$(echo "$SVC_JSON" | jq -r '.defaultDomain // .service.defaultDomain // empty')
+          else
+            DEFAULT_DOMAIN=$(node -e "const s=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log((s.defaultDomain|| (s.service && s.service.defaultDomain) || ''))" <<< "$SVC_JSON")
+          fi
+
+          if [ -z "$DEFAULT_DOMAIN" ]; then
+            echo "Warning: could not determine default domain for service $SERVICE_ID"
+            echo "BE_URL=" >> $GITHUB_ENV
+          else
+            echo "BE_URL=https://${DEFAULT_DOMAIN}" >> $GITHUB_ENV
+            echo "Backend URL set to https://${DEFAULT_DOMAIN}"
+          fi
+
+          echo "NOTE: Ensure your Render service has environment variables set (e.g. JWT_SECRET) in the Render dashboard."
+
+      # --- SLACK NOTIFY ---
+      - name: Notify Slack
+        run: |
+          curl -X POST -H "Content-type: application/json" "${{ inputs.response_url }}" \
+            -d "{\"text\":\"✅ *${{ inputs.branch }}* deployed!\\nFrontend: ${{ env.FE_URL }}\\nBackend: ${{ env.BE_URL }}\"}"
