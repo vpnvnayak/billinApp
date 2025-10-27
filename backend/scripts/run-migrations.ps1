@@ -3,7 +3,7 @@ run-migrations.ps1
 Usage: Run this from the `backend` folder in PowerShell. It will:
   - ensure a backup is created
   - prompt for confirmation
-  - run `node ./scripts/migrate.js`
+  - run `node ./scripts/migrate.js `
 
 This is a helper for interactive usage. Always review the migration files and the output before proceeding in production.
 #>
