@@ -7,15 +7,26 @@ const certDir = path.resolve(process.cwd(), 'certs')
 const certFile = path.join(certDir, 'localhost.pem')
 const keyFile = path.join(certDir, 'localhost-key.pem')
 
-export default defineConfig(({ command, mode }) => ({
-  plugins: [react()],
-  server: {
-    https: fs.existsSync(certFile) && fs.existsSync(keyFile) ? {
-      cert: fs.readFileSync(certFile),
-      key: fs.readFileSync(keyFile),
-    } : false,
-    host: 'localhost',
-    port: process.env.PORT ||5173,
-    strictPort: true
+export default defineConfig(({ command }) => {
+  const isDev = command === 'serve'
+
+  return {
+    plugins: [react()],
+    server: {
+      host: '0.0.0.0', // 👈 important for Render
+      port: parseInt(process.env.PORT) || 5173,
+      https:
+        isDev && fs.existsSync(certFile) && fs.existsSync(keyFile)
+          ? {
+              cert: fs.readFileSync(certFile),
+              key: fs.readFileSync(keyFile),
+            }
+          : false,
+      strictPort: true,
+    },
+    preview: {
+      host: '0.0.0.0', // 👈 also needed if using `vite preview` on Render
+      port: parseInt(process.env.PORT) || 5173,
+    },
   }
-}))
+})
