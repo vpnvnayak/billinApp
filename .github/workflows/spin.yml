@@ -1,4 +1,5 @@
 name: spin
+
 on:
   workflow_dispatch:
     inputs:
