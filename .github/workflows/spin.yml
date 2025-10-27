@@ -56,7 +56,7 @@ jobs:
         with:
           apiToken: ${{ env.CF_API_TOKEN }}
           accountId: ${{ env.CF_ACCOUNT_ID }}
-          projectName: spin-branch            # <-- your Pages project name
+          projectName: billingapp            # <-- your Pages project name
           directory: ${{ env.DIST_DIR }}
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
 
