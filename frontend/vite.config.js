@@ -11,11 +11,11 @@ export default defineConfig(({ command, mode }) => ({
   plugins: [react()],
   server: {
     https: fs.existsSync(certFile) && fs.existsSync(keyFile) ? {
-      cert: fs.readFileSync(certFile),
+      cert: fs.readFileSync(certFile),  
       key: fs.readFileSync(keyFile),
     } : false,
     host: 'localhost',
-    port: 5173,
+    port: process.env.PORT || 5173,
     // fail if 5173 is busy — we want the dev server to run on 5173 only
     strictPort: true
   }
