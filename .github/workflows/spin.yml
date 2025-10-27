@@ -2,49 +2,65 @@ name: spin
 on:
   workflow_dispatch:
     inputs:
-      branch: { required: true, type: string }
-      response_url: { required: true, type: string }
+      branch:
+        type: string
+        required: true
+      response_url:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with: { ref: ${{ inputs.branch }} }
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
 
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
-      # --- FRONTEND ---
+      # ---------- FRONTEND ----------
       - name: Build frontend
         working-directory: frontend
         run: |
           npm ci
           npm run build
 
-      - name: Deploy to Cloudflare Pages
+      - name: Publish to Cloudflare Pages
+        id: pages
         uses: cloudflare/pages-action@v1
         with:
           apiToken: ${{ secrets.CF_API_TOKEN }}
           accountId: ${{ secrets.CF_ACCOUNT_ID }}
-          projectName: your-pages-project
-          directory: frontend/dist
+          projectName: billinApp     # <-- set your Pages project name
+          directory: frontend/dist            # Vite output (change if CRA)
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
-        id: pages
 
-      - name: Save FE URL
+      - name: Capture FE URL
         run: echo "FE_URL=${{ steps.pages.outputs.url }}" >> $GITHUB_ENV
 
-      # --- BACKEND ---
+      # ---------- BACKEND (stub; replace with your real deploy) ----------
       - name: Deploy backend to Render
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
         run: |
-          curl -X POST "https://api.render.com/v1/services/YOUR_SERVICE_ID/deploys" \
-               -H "Authorization: Bearer $RENDER_API_KEY"
-          echo "BE_URL=https://yourapp.onrender.com" >> $GITHUB_ENV
+          curl -s -X POST \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys
+          # TODO: set BE_URL properly; using a placeholder here
+          echo "BE_URL=https://$RENDER_SERVICE_ID.onrender.com" >> $GITHUB_ENV
 
-      # --- SLACK NOTIFY ---
+      # ---------- SLACK NOTIFY ----------
       - name: Notify Slack
         run: |
           curl -X POST -H "Content-type: application/json" "${{ inputs.response_url }}" \
