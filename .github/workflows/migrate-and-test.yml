@@ -56,13 +56,14 @@ jobs:
       - name: Seed auth data (roles/users)
         working-directory: backend
         run: node ./scripts/seedAuth.js
-      - name: Run tests with coverage
+      - name: Run tests with coverage (serial)
         working-directory: backend
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
           SCHEMA_CACHE_INIT_TIMEOUT_MS: '15000'
         # run Jest with coverage and output results to backend/coverage
-        run: npm test -- --coverage --coverageDirectory=coverage --silent
+        # pass --runInBand explicitly to ensure tests run serially (safer for DB-backed integration tests)
+        run: npm test -- --coverage --coverageDirectory=coverage --silent --runInBand
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4

@@ -62,7 +62,9 @@ export default function StoreSettings() {
           // Ensure logo URL points to backend origin (not frontend origin)
           try {
             const backendOrigin = (api.defaults && api.defaults.baseURL) ? api.defaults.baseURL.replace(/\/api\/?$/,'') : `${window.location.protocol}//${window.location.hostname}:4000`
-            const full = s.logo_url.startsWith('http') ? s.logo_url : (backendOrigin + s.logo_url)
+            // Normalize legacy '/api/uploads/...' to '/uploads/...' if present
+            const normalized = s.logo_url.startsWith('/api/') ? s.logo_url.replace(/^\/api/, '') : s.logo_url
+            const full = normalized.startsWith('http') ? normalized : (backendOrigin + normalized)
             setLogoPreview(full)
           } catch (e) {
             setLogoPreview(s.logo_url)
@@ -124,7 +126,8 @@ export default function StoreSettings() {
         setForm(f => ({ ...f, ...r.data }))
         if (r.data.logo_url) {
           const backendOrigin = (api.defaults && api.defaults.baseURL) ? api.defaults.baseURL.replace(/\/api\/?$/,'') : `${window.location.protocol}//${window.location.hostname}:4000`
-          const full = r.data.logo_url.startsWith('http') ? r.data.logo_url : (backendOrigin + r.data.logo_url)
+          const normalized = r.data.logo_url.startsWith('/api/') ? r.data.logo_url.replace(/^\/api/, '') : r.data.logo_url
+          const full = normalized.startsWith('http') ? normalized : (backendOrigin + normalized)
           setLogoPreview(full)
         }
         ui.showSnackbar('Settings saved', 'success')

@@ -14,9 +14,9 @@ describe('POST /api/products auto-generated SKU', () => {
     expect(res.body).toBeTruthy()
     expect(res.body.id).toBeTruthy()
     expect(res.body.sku).toBeTruthy()
-    // sku should be 3 letters followed by 5 digits
-    const sku = res.body.sku
-    expect(/^[A-Z]{3}\d{5}$/.test(sku)).toBe(true)
+  // sku should be 2 letters followed by 6 digits
+  const sku = res.body.sku
+  expect(/^[A-Z]{2}\d{6}$/.test(sku)).toBe(true)
 
     // verify DB has the product with same sku
     const q = await db.query('SELECT id, sku FROM products WHERE id = $1', [res.body.id])
@@ -48,9 +48,9 @@ describe('POST /api/products auto-generated SKU', () => {
     const res = await request(app).post('/api/products').set('Authorization', `Bearer ${token}`).send(payload).expect(201)
     expect(res.body).toBeTruthy()
     expect(res.body.sku).toBeTruthy()
-    const expectedPrefix = storeName.replace(/\s+/g, '').slice(0,3).toUpperCase()
-    expect(res.body.sku.startsWith(expectedPrefix)).toBe(true)
-    expect(/^[A-Z]{3}\d{5}$/.test(res.body.sku)).toBe(true)
+  const expectedPrefix = storeName.replace(/\s+/g, '').slice(0,2).toUpperCase()
+  expect(res.body.sku.startsWith(expectedPrefix)).toBe(true)
+  expect(/^[A-Z]{2}\d{6}$/.test(res.body.sku)).toBe(true)
 
     // cleanup product and store
     await db.query('DELETE FROM products WHERE id = $1', [res.body.id])
@@ -74,8 +74,8 @@ describe('POST /api/products auto-generated SKU', () => {
     expect(login.status).toBe(200)
     const token = login.body.token
 
-    // determine prefix
-    const prefix = storeName.replace(/\s+/g, '').slice(0,3).toUpperCase()
+  // determine prefix (2 letters)
+  const prefix = storeName.replace(/\s+/g, '').slice(0,2).toUpperCase()
 
     // Prepare deterministic Math.random sequence: first value yields candidate that we'll pre-insert (collision), second yields different candidate
     const seq = [0.12345, 0.54321]
@@ -83,9 +83,9 @@ describe('POST /api/products auto-generated SKU', () => {
     Math.random = () => (seq.length ? seq.shift() : 0.99999)
 
     try {
-      // compute the first candidate value as the code would
-      const firstRand = Math.floor(0.12345 * 100000).toString().padStart(5, '0')
-      const firstCandidate = `${prefix}${firstRand}`
+    // compute the first candidate value as the code would (6 digits)
+    const firstRand = Math.floor(0.12345 * 1000000).toString().padStart(6, '0')
+    const firstCandidate = `${prefix}${firstRand}`
       // pre-insert colliding product with same SKU in same store
       const ins = await db.query('INSERT INTO products (sku, name, price, stock, store_id) VALUES ($1,$2,$3,$4,$5) RETURNING id', [firstCandidate, 'CollideProd', 1, 1, storeId])
       const collidingId = ins.rows[0].id
@@ -95,10 +95,10 @@ describe('POST /api/products auto-generated SKU', () => {
       const res = await request(app).post('/api/products').set('Authorization', `Bearer ${token}`).send(payload).expect(201)
       expect(res.body).toBeTruthy()
       expect(res.body.sku).toBeTruthy()
-      expect(res.body.sku).not.toBe(firstCandidate)
-      // ensure new sku matches expected pattern and prefix
-      expect(res.body.sku.startsWith(prefix)).toBe(true)
-      expect(/^[A-Z]{3}\d{5}$/.test(res.body.sku)).toBe(true)
+  expect(res.body.sku).not.toBe(firstCandidate)
+  // ensure new sku matches expected pattern and prefix (2 letters + 6 digits)
+  expect(res.body.sku.startsWith(prefix)).toBe(true)
+  expect(/^[A-Z]{2}\d{6}$/.test(res.body.sku)).toBe(true)
 
       // cleanup
       await db.query('DELETE FROM products WHERE id = $1 OR id = $2', [res.body.id, collidingId])

@@ -65,6 +65,15 @@ export function buildThermalHtml(sale, store) {
   }
 
   if (template === 'branded') {
+    // normalize logo url to absolute backend origin if needed
+    let logoSrc = ''
+    if (s.logo_url) {
+      const raw = String(s.logo_url).trim()
+      const normalized = raw.startsWith('/api/') ? raw.replace(/^\/api/, '') : raw
+      const backendOrigin = (api.defaults && api.defaults.baseURL) ? api.defaults.baseURL.replace(/\/api\/?$/,'') : `${window.location.protocol}//${window.location.hostname}:4000`
+      logoSrc = (normalized.startsWith('http') || normalized.startsWith('data:')) ? normalized : (backendOrigin + normalized)
+    }
+
     return `<!doctype html><html><head><meta charset="utf-8"><title>Receipt</title>
       <style>
         @page { size: 80mm auto; margin: 2mm }
@@ -79,7 +88,7 @@ export function buildThermalHtml(sale, store) {
         .logo{ max-width:140px; max-height:60px; display:block; margin:0 auto 6px }
       </style>
     </head><body>
-    ${(s.logo_url) ? (`<div class="center"><img src="${s.logo_url}" class="logo"/></div>`) : ''}
+  ${(logoSrc) ? (`<div class="center"><img src="${logoSrc}" class="logo"/></div>`) : ''}
     <div class="center b" style="font-size:14px">${(s.name || '').replace(/\n/g, '<br/>')}</div>
     <div class="center small">${(s.address || '').replace(/\n/g, '<br/>')}</div>
     <div class="sep"></div>

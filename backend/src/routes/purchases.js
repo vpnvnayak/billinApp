@@ -185,6 +185,28 @@ router.post('/', async (req, res) => {
           }
 
           // Now resolve or create a variant for this product (matched by mrp)
+          // If product is marked is_repacking=true, treat purchases as updating the product master (no variants)
+          const hasIsRepacking = schemaCache.hasColumn('products', 'is_repacking')
+          if (hasIsRepacking) {
+            try {
+              const pr = await client.query('SELECT is_repacking FROM products WHERE id = $1 FOR UPDATE', [productId])
+              const isRepacking = pr.rows.length ? (pr.rows[0].is_repacking === true || pr.rows[0].is_repacking === 't') : false
+              if (isRepacking) {
+                // Update product master: increase stock and set mrp/price to purchase values
+                await client.query('UPDATE products SET stock = COALESCE(stock,0) + $1, mrp = $2, price = $3 WHERE id = $4', [qty, purchaseMrp, priceVal, productId])
+                // Insert purchase item without variant_id
+                if (hasStoreCol) {
+                  await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [created.id, productId, sku, name, qty, priceVal, lineTotal, storeId])
+                } else {
+                  await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total) VALUES ($1,$2,$3,$4,$5,$6,$7)', [created.id, productId, sku, name, qty, priceVal, lineTotal])
+                }
+                continue
+              }
+            } catch (e) {
+              // if something goes wrong probing is_repacking, fall back to variant flow
+            }
+          }
+
           let variantId = null
           const vrr = await client.query('SELECT id, mrp FROM product_variants WHERE product_id = $1 AND mrp IS NOT DISTINCT FROM $2 FOR UPDATE', [productId, purchaseMrp])
           if (vrr.rows.length > 0) {
@@ -375,6 +397,28 @@ router.put('/:id', async (req, res) => {
           }
 
           // Now resolve or create a variant for this product (matched by mrp)
+          // If product is marked is_repacking=true, treat purchases as updating the product master (no variants)
+          const hasIsRepacking = schemaCache.hasColumn('products', 'is_repacking')
+          if (hasIsRepacking) {
+            try {
+              const pr = await client.query('SELECT is_repacking FROM products WHERE id = $1 FOR UPDATE', [productId])
+              const isRepacking = pr.rows.length ? (pr.rows[0].is_repacking === true || pr.rows[0].is_repacking === 't') : false
+              if (isRepacking) {
+                // Update product master: increase stock and set mrp/price to purchase values
+                await client.query('UPDATE products SET stock = COALESCE(stock,0) + $1, mrp = $2, price = $3 WHERE id = $4', [qty, purchaseMrp, priceVal, productId])
+                // Insert purchase item without variant_id
+                if (hasStoreCol) {
+                  await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [created.id, productId, sku, name, qty, priceVal, lineTotal, storeId])
+                } else {
+                  await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total) VALUES ($1,$2,$3,$4,$5,$6,$7)', [created.id, productId, sku, name, qty, priceVal, lineTotal])
+                }
+                continue
+              }
+            } catch (e) {
+              // if something goes wrong probing is_repacking, fall back to variant flow
+            }
+          }
+
           let variantId = null
           const vrr = await client.query('SELECT id, mrp FROM product_variants WHERE product_id = $1 AND mrp IS NOT DISTINCT FROM $2 FOR UPDATE', [productId, purchaseMrp])
           if (vrr.rows.length > 0) {

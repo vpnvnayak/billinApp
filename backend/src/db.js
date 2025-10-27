@@ -3,7 +3,7 @@ const { Pool } = require('pg');
 require('dotenv').config();
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgres://postgres:password@localhost:5432/pos_billing'
+  connectionString: process.env.DATABASE_URL || 'postgres://postgres:root@localhost:5432/pos_billing'
 });
 
 module.exports = {

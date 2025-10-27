@@ -96,29 +96,30 @@ export default function Products() {
             onClick={() => {
               try {
                 const rows = filtered || []
-                if (!rows.length) return
-                const cols = ['product_id','sku','name','mrp','price','tax_percent','stock','unit','is_repacking']
-                const lines = [cols.join(',')]
-                for (const r of rows) {
-                  const vals = [
-                    r.store_seq ?? '',
-                    (r.sku || ''),
-                    (r.name || ''),
-                    (r.mrp == null ? '' : r.mrp),
-                    (r.price == null ? '' : r.price),
-                    (r.tax_percent == null ? '' : r.tax_percent),
-                    (r.stock == null ? '' : r.stock),
-                    (r.unit || ''),
-                    (r.is_repacking ? 'yes' : 'no')
-                  ]
-                  const esc = vals.map(v => '"' + String(v).replace(/"/g, '""') + '"')
-                  lines.push(esc.join(','))
+                // Only include products marked for repacking
+                const exportRows = rows.filter(r => !!r.is_repacking)
+                if (!exportRows.length) return
+                // Build PLU.txt: each row per product with format:
+                // store_seq,product_store_seq_padded6,NAME_UPPER,3,MRP
+                const lines = []
+                for (const r of exportRows) {
+                  const storeId = r.store_seq != null ? String(r.store_seq) : ''
+                  // use internal product id (store-wise) padded to 6 chars as the second field
+                  const storeSeqStr = r.store_seq != null ? String(r.store_seq) : ''
+                  const storeSeqPadded = storeSeqStr ? storeSeqStr.padStart(6, '0') : ''.padStart(6, '0')
+                  // sanitize name: remove commas/newlines and uppercase
+                  const name = String(r.name || '').replace(/[\n\r,]+/g, ' ').trim().toUpperCase()
+                  const mrp = (r.mrp == null || r.mrp === '') ? 0 : Number(r.mrp)
+                  const mrpFmt = Number.isFinite(mrp) ? mrp.toFixed(2) : '0.00'
+                  // constant '3' as the fourth field per spec
+                  const rowLine = `${storeId},${storeSeqPadded},${name},3,${mrpFmt}`
+                  lines.push(rowLine)
                 }
-                const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+                const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8;' })
                 const url = URL.createObjectURL(blob)
                 const a = document.createElement('a')
                 a.href = url
-                a.download = `products-${Date.now()}.csv`
+                a.download = `PLU.txt`
                 document.body.appendChild(a)
                 a.click()
                 a.remove()

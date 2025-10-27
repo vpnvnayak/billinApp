@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import api from '../services/api'
+import { ArrowPathIcon } from '@heroicons/react/24/outline'
 
 export default function Dashboard() {
   const [adminStats, setAdminStats] = useState(null)
@@ -11,40 +12,67 @@ export default function Dashboard() {
   const [lowStockList, setLowStockList] = useState([])
   const [topProducts, setTopProducts] = useState([])
 
-  useEffect(() => {
-    api.get('/admin/stats').then(r => setAdminStats(r.data)).catch(() => {})
-    const norm = (r) => (r && r.data && (Array.isArray(r.data) ? r.data : (r.data.data || []))) || []
-    api.get('/sales').then(r => {
-      try { console.debug('sales raw response', r.data) } catch (e) {}
-      const rows = norm(r)
-      // ensure created_at fields are strings for consistent parsing
-      const normRows = rows.map(s => ({ ...s, created_at: s.created_at ? new Date(s.created_at).toISOString() : null }))
-      setSales(normRows)
-    }).catch(() => {})
-    api.get('/products').then(r => setProducts(norm(r))).catch(() => {})
-    // fetch supplier aggregates and compute total credit
-    api.get('/suppliers/aggregates').then(r => {
-      const rows = r.data || []
-      const total = rows.reduce((s, it) => s + (Number(it.credit_due) || 0), 0)
-      setTotalCredit(total)
-    }).catch(() => {})
-    // recent purchases
-    api.get('/purchases?limit=10').then(r => setRecentPurchases(r.data || [])).catch(() => {})
-    // low stock count (server returns { data: rows, total })
-    api.get('/products?filter=low_stock&limit=1').then(r => {
-      const total = (r.data && (r.data.total || 0)) || 0
-      setLowStockCount(Number(total) || 0)
-    }).catch(() => {})
-    api.get('/products?filter=low_stock&limit=6').then(r => {
-      const rows = (r.data && (r.data.data || r.data)) || []
-      setLowStockList(rows)
-    }).catch(() => {})
-    // top products by revenue
-    api.get('/products/top?limit=5').then(r => {
-      const rows = (r.data && (r.data.data || r.data)) || []
-      setTopProducts(rows)
-    }).catch(() => {})
+  const [loading, setLoading] = useState(false)
+
+  const norm = (r) => (r && r.data && (Array.isArray(r.data) ? r.data : (r.data.data || []))) || []
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true)
+    try {
+      const a = await api.get('/admin/stats').catch(() => null)
+      if (a && a.data) setAdminStats(a.data)
+
+      const salesR = await api.get('/sales').catch(() => null)
+      if (salesR) {
+        try { console.debug('sales raw response', salesR.data) } catch (e) {}
+        const rows = norm(salesR)
+        const normRows = rows.map(s => ({ ...s, created_at: s.created_at ? new Date(s.created_at).toISOString() : null }))
+        setSales(normRows)
+      }
+
+      const prodR = await api.get('/products').catch(() => null)
+      if (prodR) setProducts(norm(prodR))
+
+      const supR = await api.get('/suppliers/aggregates').catch(() => null)
+      if (supR && supR.data) {
+        const rows = supR.data || []
+        const total = rows.reduce((s, it) => s + (Number(it.credit_due) || 0), 0)
+        setTotalCredit(total)
+      }
+
+      const purR = await api.get('/purchases?limit=10').catch(() => null)
+      if (purR) setRecentPurchases(purR.data || [])
+
+      const lowCountR = await api.get('/products?filter=low_stock&limit=1').catch(() => null)
+      if (lowCountR) {
+        const total = (lowCountR.data && (lowCountR.data.total || 0)) || 0
+        setLowStockCount(Number(total) || 0)
+      }
+
+      const lowListR = await api.get('/products?filter=low_stock&limit=6').catch(() => null)
+      if (lowListR) {
+        const rows = (lowListR.data && (lowListR.data.data || lowListR.data)) || []
+        setLowStockList(rows)
+      }
+
+      const topR = await api.get('/products/top?limit=5').catch(() => null)
+      if (topR) {
+        const rows = (topR.data && (topR.data.data || topR.data)) || []
+        setTopProducts(rows)
+      }
+    } finally {
+      setLoading(false)
+    }
   }, [])
+
+  useEffect(() => {
+    fetchAll()
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') fetchAll()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [fetchAll])
 
   const totalSales = adminStats?.totalSales || sales.reduce((s, x) => s + (Number(x.grand_total) || 0), 0)
   const transactions = adminStats?.transactions || sales.length
@@ -63,6 +91,17 @@ export default function Dashboard() {
   return (
     <div className="dashboard-grid">
       <div className="dashboard-top">
+        <div style={{ display: 'flex', justifyContent: 'flex-end', margin: '8px 0' }}>
+          <button
+            className="icon-btn"
+            onClick={() => fetchAll()}
+            disabled={loading}
+            title="Refresh dashboard data"
+            aria-label="Refresh dashboard"
+          >
+            <ArrowPathIcon style={{ width: 18, height: 18 }} />
+          </button>
+        </div>
         <div className="tile-row">
           <div className="tile big">
             <div className="tile-label">Transaction Count</div>

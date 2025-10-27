@@ -6,10 +6,15 @@ async function init() {
   if (cache.initialized) return cache
   try {
     const res = await db.query("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = 'public'")
-    for (const r of res.rows) {
-      const t = r.table_name
-      if (!cache.columns[t]) cache.columns[t] = new Set()
-      cache.columns[t].add(r.column_name)
+    if (res && Array.isArray(res.rows)) {
+      for (const r of res.rows) {
+        const t = r.table_name
+        if (!cache.columns[t]) cache.columns[t] = new Set()
+        cache.columns[t].add(r.column_name)
+      }
+    } else {
+      // If the DB returned unexpected shape, treat as empty but initialized
+      cache.columns = cache.columns || {}
     }
     cache.initialized = true
   } catch (e) {

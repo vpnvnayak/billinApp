@@ -14,6 +14,7 @@ import Suppliers from './components/Suppliers'
 import Purchases from './components/Purchases'
 import PurchaseDetail from './components/PurchaseDetail'
 import Settings from './components/settings/Settings'
+import Reports from './components/Reports'
 import RegisterStore from './components/RegisterStore'
 import { registerPrintHandlers } from './services/print'
 import UIProvider from './components/ui/UIProvider'
@@ -247,6 +248,7 @@ export default function App() {
                 return <section className="products"><PurchaseDetail id={id} /></section>
               })()}
               {route === '/sales' && <section className="products"><Sales /></section>}
+              {route === '/reports' && <section className="products"><Reports /></section>}
               {route === '/' && (
                 <section className="dashboard">
                   <Dashboard />

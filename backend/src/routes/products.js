@@ -157,30 +157,31 @@ router.post('/', async (req, res) => {
     // If no SKU/barcode provided, generate one using store name prefix + 5-digit random number
     let sku = skuIn
     if (!sku || !sku.toString().trim()) {
-      // determine prefix from store name when possible
-      let prefix = 'STR'
+      // generate 8-char barcode: first 2 letters from store name, then 6 random digits
+      let prefix = 'ST'
       try {
+        let storeName = null
         if (storeIdForInsert) {
           const sres = await db.query('SELECT name FROM stores WHERE id = $1 LIMIT 1', [storeIdForInsert])
-          if (sres && sres.rows && sres.rows.length > 0 && sres.rows[0].name) {
-            const n = (sres.rows[0].name || '').toString().trim().replace(/\s+/g, '')
-            if (n.length >= 3) prefix = n.slice(0, 3).toUpperCase()
-            else if (n.length > 0) prefix = (n + 'XXX').slice(0,3).toUpperCase()
-          }
+          if (sres && sres.rows && sres.rows.length > 0) storeName = sres.rows[0].name
         } else if (process.env.STORE_NAME) {
-          const n = process.env.STORE_NAME.toString().trim().replace(/\s+/g, '')
-          if (n.length >= 3) prefix = n.slice(0,3).toUpperCase()
-          else if (n.length > 0) prefix = (n + 'XXX').slice(0,3).toUpperCase()
+          storeName = process.env.STORE_NAME
+        }
+        if (storeName) {
+          // keep only letters, pick first two chars
+          const letters = (storeName || '').toString().replace(/[^A-Za-z]/g, '')
+          if (letters.length >= 2) prefix = letters.slice(0,2).toUpperCase()
+          else if (letters.length === 1) prefix = (letters[0] + 'X').toUpperCase()
         }
       } catch (e) {
         // ignore and use default prefix
       }
 
-      const maxAttempts = 20
+      const maxAttempts = 50
       let attempt = 0
       let candidate = null
       while (attempt < maxAttempts) {
-        const rand = Math.floor(Math.random() * 100000).toString().padStart(5, '0')
+        const rand = Math.floor(Math.random() * 1000000).toString().padStart(6, '0')
         candidate = `${prefix}${rand}`
         // check uniqueness (case-insensitive), scoped to store when applicable
         let dupCheck
@@ -189,7 +190,7 @@ router.post('/', async (req, res) => {
         if (dupCheck.rows.length === 0) break
         attempt++
       }
-      if (!candidate) candidate = `${prefix}${Date.now().toString().slice(-5)}`
+      if (!candidate) candidate = `${prefix}${Date.now().toString().slice(-6)}`
       sku = candidate
     }
 
@@ -238,6 +239,15 @@ router.post('/', async (req, res) => {
       if (created && created.store_seq === undefined) {
         const r2 = await db.query('SELECT store_seq FROM products WHERE id = $1', [created.id])
         if (r2 && r2.rows && r2.rows.length > 0) created.store_seq = r2.rows[0].store_seq
+      }
+      // ensure is_repacking is returned when the DB has the column but RETURNING omitted it
+      if (created && created.is_repacking === undefined && schemaCache.hasColumn('products', 'is_repacking')) {
+        try {
+          const r3 = await db.query('SELECT is_repacking FROM products WHERE id = $1', [created.id])
+          if (r3 && r3.rows && r3.rows.length > 0) created.is_repacking = r3.rows[0].is_repacking
+        } catch (e) {
+          // ignore
+        }
       }
     } catch (e) {
       // ignore any error fetching store_seq and return what we have

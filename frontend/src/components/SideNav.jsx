@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react'
-import { UserIcon, CubeIcon, ReceiptPercentIcon, CurrencyDollarIcon, ChartBarIcon, CalendarDaysIcon, Bars3Icon, Cog6ToothIcon } from '@heroicons/react/24/outline'
+import { UserIcon, CubeIcon, ReceiptPercentIcon, CurrencyDollarIcon, ChartBarIcon, CalendarDaysIcon, Bars3Icon, Cog6ToothIcon, ChartPieIcon } from '@heroicons/react/24/outline'
 
 export default function SideNav({ collapsed, onToggle }) {
   const links = [
@@ -11,7 +11,8 @@ export default function SideNav({ collapsed, onToggle }) {
   { name: 'Purchases', icon: <ReceiptPercentIcon className="h-5 w-5" />, to: '/purchases' },
     { name: 'Sales', icon: <CurrencyDollarIcon className="h-5 w-5" />, to: '/sales' },
     { name: 'Stock', icon: <ChartBarIcon className="h-5 w-5" />, to: '/stock' },
-    { name: 'Daybook', icon: <CalendarDaysIcon className="h-5 w-5" />, to: '/daybook' }
+    { name: 'Daybook', icon: <CalendarDaysIcon className="h-5 w-5" />, to: '/daybook' },
+    { name: 'Reports', icon: <ChartPieIcon className="h-5 w-5" />, to: '/reports' }
   ]
   const rootRef = useRef()
 

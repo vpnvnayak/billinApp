@@ -62,7 +62,8 @@ router.post('/', async (req, res) => {
             const avail = Number(vr.stock || 0)
             if (avail <= 0) continue
             const take = Math.min(avail, remaining)
-            await client.query('UPDATE product_variants SET stock = GREATEST(0, stock - $1) WHERE id = $2', [take, vr.id])
+            // treat the decrement as numeric to support decimal quantities (e.g. 3.5)
+            await client.query('UPDATE product_variants SET stock = GREATEST(0, stock - $1::numeric) WHERE id = $2', [take, vr.id])
             remaining -= take
           }
         } else {
@@ -75,7 +76,8 @@ router.post('/', async (req, res) => {
           if (stock < qty) {
             return { status: 400, json: { error: `insufficient stock for product ${pid}` } }
           }
-          await client.query('UPDATE products SET stock = stock - $1 WHERE id = $2', [qty, pid])
+          // support decimal quantities by using numeric arithmetic (migration may change products.stock to NUMERIC)
+          await client.query('UPDATE products SET stock = stock - $1::numeric WHERE id = $2', [qty, pid])
         }
       }
 
