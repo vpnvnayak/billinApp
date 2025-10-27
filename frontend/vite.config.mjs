@@ -15,7 +15,7 @@ export default defineConfig(({ command, mode }) => ({
       key: fs.readFileSync(keyFile),
     } : false,
     host: 'localhost',
-    port: 5173,
+    port: process.env.PORT ||5173,
     strictPort: true
   }
 }))
