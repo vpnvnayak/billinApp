@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import api from '../services/api'
 import ListControls from './ui/ListControls'
 import PaginationFooter from './ui/PaginationFooter'
+import SupplierModal from './SupplierModal'
 
 export default function Suppliers() {
   const [list, setList] = useState([])
@@ -237,83 +238,12 @@ export default function Suppliers() {
         </div>
       </div>
 
-      {showCreate && (
-        <div className="modal-overlay">
-          <div className="modal large-modal">
-              <div className="modal-header">
-                <h3>{editId ? 'Edit Supplier' : 'Add Supplier'}</h3>
-                <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setName(''); setPhone(''); setEmail(''); setWebsite(''); setExecName(''); setPhone1(''); setPhone2(''); setAddress(''); setCity(''); setTin(''); setStateValue('Kerala'); setEditId(null); setCreditDue(0) }}>Close</button>
-              </div>
-              <div className="modal-grid">
-              <div className="field">
-                <label className="field-label">Company Name</label>
-                <input placeholder="Company Name" value={name} onChange={e => setName(e.target.value)} />
-              </div>
-              <div className="field">
-                <label className="field-label">Phone</label>
-                <input placeholder="Phone" value={phone} onChange={e => setPhone(e.target.value)} />
-              </div>
-
-              <div className="field">
-                <label className="field-label">Email</label>
-                <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
-              </div>
-              <div className="field">
-                <label className="field-label">Website</label>
-                <input placeholder="Website" value={website} onChange={e => setWebsite(e.target.value)} />
-              </div>
-
-              <div className="field">
-                <label className="field-label">Executive Name</label>
-                <input placeholder="Executive Name" value={execName} onChange={e => setExecName(e.target.value)} />
-              </div>
-              <div className="field">
-                <label className="field-label">Phone 1</label>
-                <input placeholder="Phone 1" value={phone1} onChange={e => setPhone1(e.target.value)} />
-              </div>
-
-              <div className="field">
-                <label className="field-label">Credit to be Paid</label>
-                <input placeholder="0.00" value={creditDue} onChange={e => setCreditDue(e.target.value)} />
-              </div>
-
-              <div className="field">
-                <label className="field-label">Phone 2</label>
-                <input placeholder="Phone 2" value={phone2} onChange={e => setPhone2(e.target.value)} />
-              </div>
-              <div className="field address-field">
-                <label className="field-label">Address</label>
-                <textarea placeholder="Address" value={address} onChange={e => setAddress(e.target.value)} />
-              </div>
-
-              <div className="field">
-                <label className="field-label">City</label>
-                <input placeholder="City" value={city} onChange={e => setCity(e.target.value)} />
-              </div>
-              <div className="field">
-                <label className="field-label">TIN/GSTIN</label>
-                <input placeholder="TIN/GSTIN" value={tin} onChange={e => setTin(e.target.value)} />
-              </div>
-
-              <div className="field">
-                <label className="field-label">State</label>
-                <select value={stateValue} onChange={e => setStateValue(e.target.value)}>
-                  <option>Kerala</option>
-                  <option>Tamil Nadu</option>
-                  <option>Karnataka</option>
-                  <option>Andhra Pradesh</option>
-                  <option>Other</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="modal-actions">
-              <button className="btn primary" onClick={create} disabled={loading}>{loading ? 'Saving...' : (editId ? 'Save changes' : 'Create')}</button>
-              <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setName(''); setPhone(''); setEmail(''); setWebsite(''); setExecName(''); setPhone1(''); setPhone2(''); setAddress(''); setCity(''); setTin(''); setStateValue('Kerala'); setCreditDue(0) }}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SupplierModal
+        show={showCreate}
+        supplier={editId ? { id: editId, name, phone, email, website, executive_name: execName, phone1, phone2, address, city, tin_gstin: tin, state: stateValue, credit_due: creditDue } : null}
+        onClose={() => { setShowCreate(false); setName(''); setPhone(''); setEmail(''); setWebsite(''); setExecName(''); setPhone1(''); setPhone2(''); setAddress(''); setCity(''); setTin(''); setStateValue('Kerala'); setEditId(null); setCreditDue(0) }}
+        onSaved={async (saved) => { await load(); setShowCreate(false); setEditId(null); }}
+      />
 
     </div>
   )

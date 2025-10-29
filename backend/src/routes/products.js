@@ -8,7 +8,8 @@ const schemaCache = require('../schemaCache')
 // GET /api/products - list products (with optional server-side pagination)
 router.get('/', async (req, res) => {
   try {
-    const includeIsRepacking = schemaCache.hasColumn('products', 'is_repacking')
+  const includeIsRepacking = schemaCache.hasColumn('products', 'is_repacking')
+  const includeHsn = schemaCache.hasColumn('products', 'hsn')
     const page = Math.max(1, parseInt(req.query.page) || 1)
     const limit = Math.max(1, parseInt(req.query.limit) || 10)
   const q = (req.query.q || '').trim()
@@ -47,7 +48,8 @@ router.get('/', async (req, res) => {
     }
     const offset = (page - 1) * limit
   const includeStoreSeq = schemaCache.hasColumn('products', 'store_seq')
-  const selectColsBase = includeIsRepacking ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking' : 'id, sku, name, price, mrp, unit, tax_percent, stock'
+  const baseCols = includeIsRepacking ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking' : 'id, sku, name, price, mrp, unit, tax_percent, stock'
+  const selectColsBase = includeHsn ? baseCols.replace('sku, name', 'sku, hsn, name') : baseCols
   const selectCols = includeStoreSeq ? `${selectColsBase}, store_seq, COUNT(*) OVER() AS total_count` : `${selectColsBase}, COUNT(*) OVER() AS total_count`
   const sql = `SELECT ${selectCols} FROM products ${where} ORDER BY id DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
     params.push(limit, offset)
@@ -57,7 +59,8 @@ router.get('/', async (req, res) => {
     } catch (err) {
       // If the DB doesn't have the is_repacking column (e.g., migrations not applied), retry without it.
       if (err && err.code === '42703' && /is_repacking/.test(err.message || '')) {
-        const selectColsNo = 'id, sku, name, price, mrp, unit, tax_percent, stock, COUNT(*) OVER() AS total_count'
+        const selectColsNoBase = 'id, sku, name, price, mrp, unit, tax_percent, stock'
+        const selectColsNo = includeHsn ? selectColsNoBase.replace('sku, name', 'sku, hsn, name') + ', COUNT(*) OVER() AS total_count' : selectColsNoBase + ', COUNT(*) OVER() AS total_count'
         // params already includes limit and offset at this point; compute their placeholder positions
         const sqlNo = `SELECT ${selectColsNo} FROM products ${where} ORDER BY id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`
         result = await db.query(sqlNo, params)
@@ -109,17 +112,20 @@ router.get('/:id', async (req, res) => {
   // scope by store if present
   const storeId = req.user && req.user.store_id ? req.user.store_id : null
   const includeIsRepackingForGet = schemaCache.hasColumn('products', 'is_repacking')
+  const includeHsnForGet = schemaCache.hasColumn('products', 'hsn')
   const includeStoreSeqForGet = schemaCache.hasColumn('products', 'store_seq')
-  const colsForGetBase = includeIsRepackingForGet ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking' : 'id, sku, name, price, mrp, unit, tax_percent, stock'
+  const colsForGetBasePlain = includeIsRepackingForGet ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking' : 'id, sku, name, price, mrp, unit, tax_percent, stock'
+  const colsForGetBase = includeHsnForGet ? colsForGetBasePlain.replace('sku, name', 'sku, hsn, name') : colsForGetBasePlain
   const colsForGet = includeStoreSeqForGet ? `${colsForGetBase}, store_seq` : colsForGetBase
   let result
   try {
     result = storeId
       ? await db.query(`SELECT ${colsForGet} FROM products WHERE id = $1 AND store_id = $2`, [id, storeId])
       : await db.query(`SELECT ${colsForGet} FROM products WHERE id = $1`, [id]);
-  } catch (err) {
+    } catch (err) {
     if (err && err.code === '42703' && /is_repacking/.test(err.message || '')) {
-      const colsNo = 'id, sku, name, price, mrp, unit, tax_percent, stock'
+      const colsNoBase = 'id, sku, name, price, mrp, unit, tax_percent, stock'
+      const colsNo = includeHsnForGet ? colsNoBase.replace('sku, name', 'sku, hsn, name') : colsNoBase
       result = storeId
         ? await db.query(`SELECT ${colsNo} FROM products WHERE id = $1 AND store_id = $2`, [id, storeId])
         : await db.query(`SELECT ${colsNo} FROM products WHERE id = $1`, [id])
@@ -136,13 +142,14 @@ router.get('/:id', async (req, res) => {
 // POST /api/products - create a product (simple)
 router.post('/', async (req, res) => {
   try {
-  const { name, sku: skuIn, price, mrp, unit, stock, tax_percent, is_repacking } = req.body || {}
+  const { name, sku: skuIn, price, mrp, unit, stock, tax_percent, is_repacking, hsn } = req.body || {}
     // Basic validation
     if (!name || typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name is required' })
     if (price !== undefined && (Number.isNaN(Number(price)) || Number(price) < 0)) return res.status(400).json({ error: 'price must be a non-negative number' })
     if (mrp !== undefined && mrp !== null && (Number.isNaN(Number(mrp)) || Number(mrp) < 0)) return res.status(400).json({ error: 'mrp must be a non-negative number or null' })
     if (stock !== undefined && (!Number.isInteger(Number(stock)) || Number(stock) < 0)) return res.status(400).json({ error: 'stock must be a non-negative integer' })
     if (tax_percent !== undefined && (Number.isNaN(Number(tax_percent)) || Number(tax_percent) < 0)) return res.status(400).json({ error: 'tax_percent must be a non-negative number' })
+    if (hsn !== undefined && hsn !== null && typeof hsn !== 'string') return res.status(400).json({ error: 'hsn must be a string' })
 
     if (!process.env.DATABASE_URL) {
       // return created object with fake id
@@ -207,29 +214,53 @@ router.post('/', async (req, res) => {
     }
   const isRepackingVal = !!is_repacking
   const includeStoreSeq = schemaCache.hasColumn('products', 'store_seq')
+  const includeHsn = schemaCache.hasColumn('products', 'hsn')
     let result
     if (schemaCache.hasColumn('products', 'is_repacking')) {
       try {
-        const returning = includeStoreSeq ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking, store_seq' : 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking'
-        result = await db.query(
-          `INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, is_repacking, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${returning}`,
-          [sku || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, isRepackingVal, storeIdForInsert]
-        )
+        const returningBase = includeStoreSeq ? 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking, store_seq' : 'id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking'
+        const returning = includeHsn ? returningBase.replace('sku, name', 'sku, hsn, name') : returningBase
+        if (includeHsn) {
+          result = await db.query(
+            `INSERT INTO products (sku, hsn, name, price, mrp, unit, tax_percent, stock, is_repacking, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING ${returning}`,
+            [sku || null, hsn || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, isRepackingVal, storeIdForInsert]
+          )
+        } else {
+          result = await db.query(
+            `INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, is_repacking, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${returning}`,
+            [sku || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, isRepackingVal, storeIdForInsert]
+          )
+        }
       } catch (err) {
         if (err && err.code === '42703' && /is_repacking/.test(err.message || '')) {
           // fallback to insert without is_repacking column
-          result = await db.query(
-            'INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, sku, name, price, mrp, unit, tax_percent, stock',
-            [sku || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, storeIdForInsert]
-          )
+          if (includeHsn) {
+            result = await db.query(
+              'INSERT INTO products (sku, hsn, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, sku, hsn, name, price, mrp, unit, tax_percent, stock',
+              [sku || null, hsn || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, storeIdForInsert]
+            )
+          } else {
+            result = await db.query(
+              'INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, sku, name, price, mrp, unit, tax_percent, stock',
+              [sku || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, storeIdForInsert]
+            )
+          }
         } else throw err
       }
     } else {
-      const returningNoRepack = includeStoreSeq ? 'id, sku, name, price, mrp, unit, tax_percent, stock, store_seq' : 'id, sku, name, price, mrp, unit, tax_percent, stock'
-      result = await db.query(
-        `INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${returningNoRepack}`,
-        [sku || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, storeIdForInsert]
-      )
+      const returningNoRepackBase = includeStoreSeq ? 'id, sku, name, price, mrp, unit, tax_percent, stock, store_seq' : 'id, sku, name, price, mrp, unit, tax_percent, stock'
+      const returningNoRepack = includeHsn ? returningNoRepackBase.replace('sku, name', 'sku, hsn, name') : returningNoRepackBase
+      if (includeHsn) {
+        result = await db.query(
+          `INSERT INTO products (sku, hsn, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${returningNoRepack}`,
+          [sku || null, hsn || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, storeIdForInsert]
+        )
+      } else {
+        result = await db.query(
+          `INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING ${returningNoRepack}`,
+          [sku || null, name, price || 0, mrp || null, unit || null, taxVal, stockVal, storeIdForInsert]
+        )
+      }
     }
     // If schema cache was not initialized at the time of building the RETURNING clause,
     // the INSERT may have omitted store_seq even though the DB has the column and trigger.
@@ -284,7 +315,7 @@ router.get('/:id/variants', async (req, res) => {
 // PUT /api/products/:id - update a product
 router.put('/:id', async (req, res) => {
   const { id } = req.params
-  const { name, sku, price, mrp, unit, tax_percent, stock, is_repacking } = req.body || {}
+  const { name, sku, price, mrp, unit, tax_percent, stock, is_repacking, hsn } = req.body || {}
   if (!name || typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name is required' })
   if (price !== undefined && (Number.isNaN(Number(price)) || Number(price) < 0)) return res.status(400).json({ error: 'price must be a non-negative number' })
   if (mrp !== undefined && mrp !== null && (Number.isNaN(Number(mrp)) || Number(mrp) < 0)) return res.status(400).json({ error: 'mrp must be a non-negative number or null' })
@@ -293,7 +324,7 @@ router.put('/:id', async (req, res) => {
   if (!Number.isInteger(Number(id))) return res.status(400).json({ error: 'invalid id' })
   try {
     if (!process.env.DATABASE_URL) {
-        return res.json({ id, sku: sku || '', name, price: price || 0, mrp: mrp || null, unit: unit || null, tax_percent: tax_percent || 0, stock: stock || 0, is_repacking: !!is_repacking })
+        return res.json({ id, sku: sku || '', name, price: price || 0, mrp: mrp || null, unit: unit || null, tax_percent: tax_percent || 0, stock: stock || 0, is_repacking: !!is_repacking, hsn: hsn || null })
       }
 
     // Ensure SKU+MRP uniqueness on update: check other products with same SKU and MRP (case-insensitive SKU) excluding this id
@@ -309,43 +340,82 @@ router.put('/:id', async (req, res) => {
       if (dup.rows.length > 0) return res.status(400).json({ error: 'SKU/barcode with same MRP already exists' })
     }
 
+    if (hsn !== undefined && hsn !== null && typeof hsn !== 'string') return res.status(400).json({ error: 'hsn must be a string' })
     const isRepackingVal = !!is_repacking
+    const includeHsn = schemaCache.hasColumn('products', 'hsn')
     let result
     if (schemaCache.hasColumn('products', 'is_repacking')) {
       try {
-        result = await db.query(
-          // only update if product belongs to store when scoped
-          req.user && req.user.store_id
-            ? 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7, is_repacking=$8 WHERE id=$9 AND store_id=$10 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking'
-            : 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7, is_repacking=$8 WHERE id=$9 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking',
-          req.user && req.user.store_id
-            ? [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, isRepackingVal, id, req.user.store_id]
-            : [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, isRepackingVal, id]
-        )
-      } catch (err) {
-        if (err && err.code === '42703' && /is_repacking/.test(err.message || '')) {
-          // retry without is_repacking
+        if (includeHsn) {
           result = await db.query(
             // only update if product belongs to store when scoped
             req.user && req.user.store_id
-              ? 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7 WHERE id=$8 AND store_id=$9 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock'
-              : 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7 WHERE id=$8 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock',
+              ? 'UPDATE products SET sku=$1, hsn=$2, name=$3, price=$4, mrp=$5, unit=$6, tax_percent=$7, stock=$8, is_repacking=$9 WHERE id=$10 AND store_id=$11 RETURNING id, sku, hsn, name, price, mrp, unit, tax_percent, stock, is_repacking'
+              : 'UPDATE products SET sku=$1, hsn=$2, name=$3, price=$4, mrp=$5, unit=$6, tax_percent=$7, stock=$8, is_repacking=$9 WHERE id=$10 RETURNING id, sku, hsn, name, price, mrp, unit, tax_percent, stock, is_repacking',
             req.user && req.user.store_id
-              ? [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id, req.user.store_id]
-              : [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id]
+              ? [sku || null, hsn || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, isRepackingVal, id, req.user.store_id]
+              : [sku || null, hsn || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, isRepackingVal, id]
           )
+        } else {
+          result = await db.query(
+            // only update if product belongs to store when scoped
+            req.user && req.user.store_id
+              ? 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7, is_repacking=$8 WHERE id=$9 AND store_id=$10 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking'
+              : 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7, is_repacking=$8 WHERE id=$9 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock, is_repacking',
+            req.user && req.user.store_id
+              ? [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, isRepackingVal, id, req.user.store_id]
+              : [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, isRepackingVal, id]
+          )
+        }
+      } catch (err) {
+        if (err && err.code === '42703' && /is_repacking/.test(err.message || '')) {
+          // retry without is_repacking
+          if (includeHsn) {
+            result = await db.query(
+              // only update if product belongs to store when scoped
+              req.user && req.user.store_id
+                ? 'UPDATE products SET sku=$1, hsn=$2, name=$3, price=$4, mrp=$5, unit=$6, tax_percent=$7, stock=$8 WHERE id=$9 AND store_id=$10 RETURNING id, sku, hsn, name, price, mrp, unit, tax_percent, stock'
+                : 'UPDATE products SET sku=$1, hsn=$2, name=$3, price=$4, mrp=$5, unit=$6, tax_percent=$7, stock=$8 WHERE id=$9 RETURNING id, sku, hsn, name, price, mrp, unit, tax_percent, stock',
+              req.user && req.user.store_id
+                ? [sku || null, hsn || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id, req.user.store_id]
+                : [sku || null, hsn || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id]
+            )
+          } else {
+            result = await db.query(
+              // only update if product belongs to store when scoped
+              req.user && req.user.store_id
+                ? 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7 WHERE id=$8 AND store_id=$9 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock'
+                : 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7 WHERE id=$8 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock',
+              req.user && req.user.store_id
+                ? [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id, req.user.store_id]
+                : [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id]
+            )
+          }
         } else throw err
       }
     } else {
-      result = await db.query(
-        // only update if product belongs to store when scoped
-        req.user && req.user.store_id
-          ? 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7 WHERE id=$8 AND store_id=$9 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock'
-          : 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7 WHERE id=$8 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock',
-        req.user && req.user.store_id
-          ? [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id, req.user.store_id]
-          : [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id]
-      )
+      const includeHsn = schemaCache.hasColumn('products', 'hsn')
+      if (includeHsn) {
+        result = await db.query(
+          // only update if product belongs to store when scoped
+          req.user && req.user.store_id
+            ? 'UPDATE products SET sku=$1, hsn=$2, name=$3, price=$4, mrp=$5, unit=$6, tax_percent=$7, stock=$8 WHERE id=$9 AND store_id=$10 RETURNING id, sku, hsn, name, price, mrp, unit, tax_percent, stock'
+            : 'UPDATE products SET sku=$1, hsn=$2, name=$3, price=$4, mrp=$5, unit=$6, tax_percent=$7, stock=$8 WHERE id=$9 RETURNING id, sku, hsn, name, price, mrp, unit, tax_percent, stock',
+          req.user && req.user.store_id
+            ? [sku || null, hsn || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id, req.user.store_id]
+            : [sku || null, hsn || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id]
+        )
+      } else {
+        result = await db.query(
+          // only update if product belongs to store when scoped
+          req.user && req.user.store_id
+            ? 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7 WHERE id=$8 AND store_id=$9 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock'
+            : 'UPDATE products SET sku=$1, name=$2, price=$3, mrp=$4, unit=$5, tax_percent=$6, stock=$7 WHERE id=$8 RETURNING id, sku, name, price, mrp, unit, tax_percent, stock',
+          req.user && req.user.store_id
+            ? [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id, req.user.store_id]
+            : [sku || null, name, price || 0, mrp || null, unit || null, tax_percent || 0, stock || 0, id]
+        )
+      }
     }
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' })
     res.json(result.rows[0])
