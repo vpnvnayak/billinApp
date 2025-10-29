@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react'
 import api from '../services/api'
 import * as ui from '../services/ui'
+import SupplierModal from './SupplierModal'
 
 export default function PurchaseDetail({ id }) {
   const [loading, setLoading] = useState(true)
@@ -8,6 +9,7 @@ export default function PurchaseDetail({ id }) {
   const [purchase, setPurchase] = useState(null)
   const [items, setItems] = useState([])
   const [suppliers, setSuppliers] = useState([])
+  const [showSupplierCreate, setShowSupplierCreate] = useState(false)
   const [supplierSearch, setSupplierSearch] = useState('')
   const [suggestionsVisible, setSuggestionsVisible] = useState(false)
   const [highlightedIndex, setHighlightedIndex] = useState(-1)
@@ -360,6 +362,21 @@ export default function PurchaseDetail({ id }) {
           <div>{purchase.created_at ? new Date(purchase.created_at).toLocaleString() : ''}</div>
         </div>
 
+        <SupplierModal
+          show={showSupplierCreate}
+          supplier={null}
+          onClose={() => setShowSupplierCreate(false)}
+          onSaved={(created) => {
+            if (created) {
+              const exists = (suppliers || []).some(s => s.id === created.id)
+              if (!exists) setSuppliers(s => Array.isArray(s) ? [created, ...s] : [created])
+              setPurchase(p => ({ ...p, supplier_id: created.id, supplier_name: created.name, metadata: { ...p.metadata, supplier_name: created.name } }))
+              setSupplierSearch(created.name)
+            }
+            setShowSupplierCreate(false)
+          }}
+        />
+
         <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
           <label className="field-label" style={{ margin: 0 }}>Upload Invoice</label>
           <input type="file" accept=".pdf,image/*" onChange={async (e) => {
@@ -435,7 +452,7 @@ export default function PurchaseDetail({ id }) {
                   </div>
                 )}
               </div>
-              <button className="btn success" onClick={() => { if (window.__appNavigate) window.__appNavigate('/suppliers'); else window.location.href = '/suppliers' }}>New!</button>
+              <button className="btn success" onClick={() => setShowSupplierCreate(true)}>New!</button>
             </div>
           </div>
           <div className="field">

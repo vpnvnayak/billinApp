@@ -151,10 +151,18 @@ export default function POS() {
       // Query pos/products with the sku to get all matching rows (variants preferred by backend)
       const r = await api.get('/pos/products', { params: { query: sku, limit: 50 } })
       const items = r.data || []
+      // preserve scale_qty from the original item (if barcode provided quantity)
+      const origScaleQty = (item && (item.scale_qty !== undefined ? item.scale_qty : item.scaleQty || null))
       // filter exact sku matches
       const matched = items.filter(it => String(it.sku || '').toLowerCase() === sku.toLowerCase())
+      // propagate scale_qty to matched rows so downstream addProduct receives it
+      if (origScaleQty != null && matched.length > 0) {
+        for (const m of matched) {
+          try { m.scale_qty = origScaleQty } catch (e) { /* ignore */ }
+        }
+      }
       if (matched.length === 0) {
-        // fallback: add the original item
+        // fallback: add the original item (preserves scale_qty)
         addProduct(item)
         return
       }
@@ -170,7 +178,9 @@ export default function POS() {
         addProduct(matched[0])
       } else {
         // multiple MRPs available -> prompt cashier to type exact MRP
-        setMrpPrompt({ group: matched, sku, value: '' })
+        // ensure group entries carry scale_qty as well
+        const group = (origScaleQty != null) ? matched.map(m => ({ ...m, scale_qty: origScaleQty })) : matched
+        setMrpPrompt({ group, sku, value: '' })
       }
     } catch (e) {
       console.error('variant check failed', e)
@@ -276,10 +286,20 @@ export default function POS() {
       // for payloads so backend receives product_id and optional variant_id.
       const cartId = `${p.id}:${p.variant_id || 'm'}`
       const existing = c.find(it => it.cartId === cartId)
+      // if backend provided a scale quantity (from barcode like #...), use that
+      let addedQty = 1
+      try {
+        const sq = p && (p.scale_qty !== undefined ? p.scale_qty : p.scaleQty || null)
+        if (sq != null) {
+          const n = Number(sq)
+          if (Number.isFinite(n) && n > 0) addedQty = n
+        }
+      } catch (e) { /* ignore and use default 1 */ }
+
       if (existing) {
-        return c.map(it => it.cartId === cartId ? { ...it, qty: Number(it.qty || 0) + 1 } : it)
+        return c.map(it => it.cartId === cartId ? { ...it, qty: Number(it.qty || 0) + addedQty } : it)
       }
-      const item = { ...p, qty: 1, cartId }
+      const item = { ...p, qty: addedQty, cartId }
       return [...c, item]
     })
     setQuery('')
@@ -597,7 +617,7 @@ export default function POS() {
                       <td>{i+1}</td>
                       <td>{it.name}</td>
                       <td>
-                        <input type="number" min="0" value={it.qty} onChange={e => updateCartItem(it.cartId, { qty: Number(e.target.value) })} className="small-input" />
+                        <input type="number" min="0" step="0.001" value={it.qty} onChange={e => updateCartItem(it.cartId, { qty: Number(e.target.value) })} className="small-input" />
                       </td>
                       <td>{it.mrp != null ? it.mrp : '-'}</td>
                       <td>{it.tax_percent}%</td>

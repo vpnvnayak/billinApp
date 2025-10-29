@@ -247,6 +247,7 @@ export default function Products() {
                   <th>SL</th>
                   <th>Product ID</th>
                   <th>SKU</th>
+                  <th>HSN</th>
                   <th>Name</th>
                   <th>MRP</th>
                   <th>Selling Price</th>
@@ -259,7 +260,7 @@ export default function Products() {
               </thead>
               <tbody>
                 {filtered.length === 0 && (
-                  <tr><td colSpan={12}>No products found</td></tr>
+                  <tr><td colSpan={13}>No products found</td></tr>
                 )}
                 {filtered.map((p, i) => (
                   <React.Fragment key={p.id}>
@@ -276,6 +277,7 @@ export default function Products() {
                       </td>
                       <td style={{ fontSize: 12, color: 'var(--color-muted)' }}>{p.store_seq ?? ''}</td>
                       <td>{p.sku}</td>
+                      <td>{p.hsn ?? ''}</td>
                       <td>{p.name}</td>
                       <td>{p.mrp ?? ''}</td>
                       <td>{p.price ?? ''}</td>
@@ -295,6 +297,7 @@ export default function Products() {
                         <td></td>
                         <td></td>
                         <td style={{ paddingLeft: 24 }}>{p.sku}</td>
+                        <td>{p.hsn ?? ''}</td>
                         <td>{p.name}</td>
                         <td>{v.mrp == null ? '' : v.mrp}</td>
                         <td>{v.price ?? ''}</td>
@@ -378,6 +381,7 @@ function ProductModal({ onClose, onCreated, product }) {
   const [unit, setUnit] = useState(product?.unit || 'KG')
   const [taxPercent, setTaxPercent] = useState(product?.tax_percent ?? 0)
   const [stock, setStock] = useState(product?.stock ?? 0)
+  const [hsn, setHsn] = useState(product?.hsn || '')
   const [isRepacking, setIsRepacking] = useState(!!product?.is_repacking)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
@@ -398,12 +402,12 @@ function ProductModal({ onClose, onCreated, product }) {
           })
         } else {
           r = await api.put(`/products/${product.id}`, {
-            name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock, is_repacking: isRepacking
+            name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock, is_repacking: isRepacking, hsn: hsn || null
           })
         }
       } else {
         r = await api.post('/products', {
-          name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock, is_repacking: isRepacking
+          name, sku, mrp: mrp || null, price: price || null, unit, tax_percent: taxPercent, stock, is_repacking: isRepacking, hsn: hsn || null
         })
       }
       if (onCreated) {
@@ -450,6 +454,11 @@ function ProductModal({ onClose, onCreated, product }) {
           <input type="text" value={sku} onChange={e => setSku(e.target.value)} />
         </label>
         {skuExists && <div className="error">Barcode/SKU already exists</div>}
+
+        <label className="field">
+          <span className="field-label">HSN</span>
+          <input type="text" value={hsn} onChange={e => setHsn(e.target.value)} />
+        </label>
 
         <div className="row">
           <div className="col">
