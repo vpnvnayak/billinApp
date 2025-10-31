@@ -29,10 +29,13 @@ router.post('/', async (req, res) => {
   }
 
   // Use transaction helper to centralize BEGIN/COMMIT/ROLLBACK/release and metrics
+  // touched to refresh schema cache
   try {
     const result = await tx.runTransaction(async (client) => {
-      // Check stock for each item and decrement where product_id is a valid integer.
-      // Prefer product_variants when present: lock variant rows and decrement across variants.
+  // Check stock for each item and decrement where product_id is a valid integer.
+  // Prefer product_variants when present: if item.variant_id is provided, lock that variant row
+  // and decrement only that variant; otherwise fall back to the existing behaviour of consuming
+  // stock across variants or product-level stock.
       for (const it of items) {
         const pid = v.isValidInt32(it.product_id) ? Number(it.product_id) : null
         if (!pid) {
@@ -40,6 +43,36 @@ router.post('/', async (req, res) => {
           continue
         }
         const qty = Number(it.qty || 0)
+
+        // If client specified a variant_id and sale_items supports variant_id, attempt to lock that row
+        // and decrement only that variant's stock.
+        const specifiedVariantId = v.isValidInt32(it.variant_id) ? Number(it.variant_id) : null
+        if (specifiedVariantId) {
+          // Lock the specified variant row
+          const vr = await client.query('SELECT id, stock, product_id FROM product_variants WHERE id = $1 FOR UPDATE', [specifiedVariantId])
+          if (vr.rows.length === 0) {
+            return { status: 400, json: { error: `variant not found ${specifiedVariantId}` } }
+          }
+          if (Number(vr.rows[0].product_id) !== pid) {
+            return { status: 400, json: { error: `variant ${specifiedVariantId} does not belong to product ${pid}` } }
+          }
+          const avail = Number(vr.rows[0].stock || 0)
+          if (avail < qty) {
+            return { status: 400, json: { error: `insufficient stock for variant ${specifiedVariantId}` } }
+          }
+          await client.query('UPDATE product_variants SET stock = GREATEST(0, stock - $1::numeric) WHERE id = $2', [qty, specifiedVariantId])
+          continue
+        }
+
+        // If client requested using product-level stock (master product was selected), lock product row and decrement
+        if (it.use_product_stock) {
+          const pr = await client.query('SELECT stock FROM products WHERE id = $1 FOR UPDATE', [pid])
+          if (pr.rows.length === 0) return { status: 400, json: { error: `product not found ${pid}` } }
+          const pstock = Number(pr.rows[0].stock || 0)
+          if (pstock < qty) return { status: 400, json: { error: `insufficient product stock for product ${pid}` } }
+          await client.query('UPDATE products SET stock = stock - $1::numeric WHERE id = $2', [qty, pid])
+          continue
+        }
 
         // Try to find variants for this product and lock them
         let vrows
@@ -96,7 +129,7 @@ router.post('/', async (req, res) => {
       }
 
       const storeId = req.user && req.user.store_id ? req.user.store_id : null
-      // incorporate loyalty logic: payment_breakdown may include { loyalty_used: <points> }
+  // incorporate loyalty logic: payment_breakdown may include { loyalty_used: <points> }
       // award: for every 100 Rs of grand total, award 1 loyalty point
       const awardPoints = Math.floor(Number(grand || 0) / 100)
       // loyalty_used is points the customer chooses to spend (1 point == 1 Rs)
@@ -108,12 +141,16 @@ router.post('/', async (req, res) => {
       // Payable: grand total (use grand as computed). Payment and loyalty interplay:
       // Deduct requested loyalty_used first (clamped to available). Then if paidAmount + requested < grand, auto-apply remaining loyalty up to deficit.
       let totalLoyaltyUsed = 0
+      // priorCredit must be visible later when updating customer's credit_due
+      let priorCredit = 0
       const metadataWithLoyalty = Object.assign({}, payment_breakdown || {}, { loyalty_awarded: awardPoints, loyalty_used: 0 })
       if (safeUserId) {
         try {
           // Attempt to lock and read customer's loyalty_points. If column missing this will throw and be caught.
-          const cres = await client.query('SELECT COALESCE(loyalty_points,0) AS loyalty_points FROM customers WHERE id = $1 FOR UPDATE', [safeUserId])
+          // lock and read customer's loyalty points and existing credit due
+          const cres = await client.query('SELECT COALESCE(loyalty_points,0) AS loyalty_points, COALESCE(credit_due,0)::numeric AS credit_due FROM customers WHERE id = $1 FOR UPDATE', [safeUserId])
           let avail = Number((cres.rows[0] && cres.rows[0].loyalty_points) || 0)
+          priorCredit = Number((cres.rows[0] && cres.rows[0].credit_due) || 0)
           // Deduct requested loyalty_used (clamped)
           const requested = Math.max(0, Math.floor(Number(loyaltyUsed || 0)))
           const deductRequested = Math.min(avail, requested)
@@ -134,8 +171,10 @@ router.post('/', async (req, res) => {
               avail -= autoToUse
             }
           }
+          // Record loyalty available after deductions so receipt can reliably show remaining points.
           // For audit we keep metadata.loyalty_used as requested by client (may be more than actually deducted).
           metadataWithLoyalty.loyalty_used = loyaltyUsed
+          metadataWithLoyalty.loyalty_available = Number(avail || 0)
         } catch (e) {
           console.error('Failed auto/apply loyalty', e)
         }
@@ -147,27 +186,82 @@ router.post('/', async (req, res) => {
       )
       const saleId = saleRes.rows[0].id
 
-      // Determine if sale_items has store_id column from schema cache
-      const saleItemsHasStore = schemaCache.hasColumn('sale_items', 'store_id')
+  // Determine if sale_items has store_id column from schema cache
 
+      // Prepare to persist each item's snapshot so receipts can rely on saved data later.
+      const hasMrpCol = schemaCache.hasColumn('sale_items', 'mrp')
+      const saleItemsHasStore = schemaCache.hasColumn('sale_items', 'store_id')
+      const saleItemsHasVariant = schemaCache.hasColumn('sale_items', 'variant_id')
       for (const it of items) {
-        const line_total = Number(it.qty || 0) * Number(it.price || 0)
+        const qtyVal = Number(it.qty || 0)
+        const priceVal = Number(it.price || 0)
+        const line_total = qtyVal * priceVal
         const pid = v.isValidInt32(it.product_id) ? Number(it.product_id) : null
         try {
-          const taxPercentVal = Number(it.tax_percent || 0)
-          const qtyVal = Number(it.qty || 0)
-          const priceVal = Number(it.price || 0)
-          if (saleItemsHasStore && storeId) {
-            await client.query(
-              'INSERT INTO sale_items (sale_id, product_id, sku, name, qty, price, tax_percent, line_total, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-              [saleId, pid, it.sku || null, it.name || null, qtyVal, priceVal, taxPercentVal, line_total.toFixed(2), storeId]
-            )
-          } else {
-            await client.query(
-              'INSERT INTO sale_items (sale_id, product_id, sku, name, qty, price, tax_percent, line_total) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-              [saleId, pid, it.sku || null, it.name || null, qtyVal, priceVal, taxPercentVal, line_total.toFixed(2)]
-            )
+          // Determine authoritative snapshot values. Prefer client-provided values for price/qty
+          // (these reflect what the customer was charged). For mrp and tax_percent prefer variant -> product -> provided values.
+          let mrpVal = (typeof it.mrp !== 'undefined' && it.mrp !== null) ? Number(it.mrp) : null
+          let taxPercentVal = (typeof it.tax_percent !== 'undefined' && it.tax_percent !== null) ? Number(it.tax_percent) : 0
+          let skuVal = it.sku || null
+          let nameVal = it.name || null
+
+          if (pid) {
+            // fetch product for base fields
+            const pr = await client.query('SELECT sku, name, mrp AS product_mrp, price AS product_price, tax_percent AS product_tax FROM products WHERE id = $1', [pid])
+            const p = pr.rows && pr.rows[0] ? pr.rows[0] : null
+            if (p) {
+              skuVal = skuVal || p.sku || null
+              nameVal = nameVal || p.name || null
+              // if mrp not provided, consider product-level mrp/price as fallback
+              if (mrpVal === null) {
+                if (p.product_mrp != null) mrpVal = Number(p.product_mrp)
+                else if (p.product_price != null) mrpVal = Number(p.product_price)
+              }
+              if ((!taxPercentVal || taxPercentVal === 0) && (p.product_tax != null)) {
+                taxPercentVal = Number(p.product_tax)
+              }
+            }
+
+            // if a variant_id was specified, prefer variant's values
+            const vid = v.isValidInt32(it.variant_id) ? Number(it.variant_id) : null
+            if (vid) {
+              try {
+                const vr = await client.query('SELECT mrp AS variant_mrp, price AS variant_price, tax_percent AS variant_tax, barcode FROM product_variants WHERE id = $1', [vid])
+                const vrow = vr.rows && vr.rows[0] ? vr.rows[0] : null
+                if (vrow) {
+                  // prefer variant mrp over previously chosen mrp
+                  if (vrow.variant_mrp != null) mrpVal = Number(vrow.variant_mrp)
+                  // prefer variant tax if product didn't have tax
+                  if (vrow.variant_tax != null) taxPercentVal = Number(vrow.variant_tax)
+                  // variant doesn't have name/sku fields in this schema; keep product names
+                }
+              } catch (e) {
+                // variant lookup failed - continue with product-level values
+              }
+            }
           }
+
+          // Fallbacks: if mrp still null set to priceVal
+          if (mrpVal === null || isNaN(mrpVal)) mrpVal = Number(priceVal || 0)
+
+          // Build a dynamic INSERT that includes optional columns when present in the schema.
+          // This ensures we always persist variant_id when the column exists, even if storeId is null.
+          const cols = ['sale_id','product_id']
+          const vals = [saleId, pid]
+          if (saleItemsHasVariant) { cols.push('variant_id'); vals.push(v.isValidInt32(it.variant_id) ? Number(it.variant_id) : null) }
+          cols.push('sku'); vals.push(skuVal)
+          cols.push('name'); vals.push(nameVal)
+          cols.push('qty'); vals.push(qtyVal)
+          cols.push('price'); vals.push(priceVal)
+          cols.push('tax_percent'); vals.push(taxPercentVal)
+          cols.push('line_total'); vals.push(line_total.toFixed(2))
+          if (hasMrpCol) { cols.push('mrp'); vals.push(mrpVal.toFixed(2)) }
+          // include store_id column when it exists; insert NULL if storeId is not set
+          if (saleItemsHasStore) { cols.push('store_id'); vals.push(storeId || null) }
+
+          const placeholders = vals.map((_, i) => `$${i+1}`).join(',')
+          const sql = `INSERT INTO sale_items (${cols.join(',')}) VALUES (${placeholders})`
+          await client.query(sql, vals)
         } catch (e) {
           console.error('Failed inserting sale_item for sale', saleId, 'item:', { pid, sku: it.sku, name: it.name, qty: it.qty, price: it.price, tax_percent: it.tax_percent, line_total })
           throw e
@@ -185,14 +279,17 @@ router.post('/', async (req, res) => {
 
           // compute remaining unpaid after payments and loyalty
           const paidPlusLoyalty = Number(paidAmount || 0) + Number(totalLoyaltyUsed || 0)
-          const deficit = Math.max(0, Number(grand || 0) - paidPlusLoyalty)
+          // include any prior customer credit into total due for this sale
+          const totalDue = Number(grand || 0) + (Number(priorCredit || 0))
+          const deficit = Math.max(0, totalDue - paidPlusLoyalty)
           const hasCreditCol = schemaCache.hasColumn('customers', 'credit_due')
-          if (deficit > 0 && hasCreditCol) {
-            // increment customer's credit_due
-            await client.query('UPDATE customers SET credit_due = coalesce(credit_due,0) + $1 WHERE id = $2', [deficit.toFixed(2), safeUserId])
-            // also annotate metadata with credit added for audit
-            metadataWithLoyalty.credit_added = (metadataWithLoyalty.credit_added || 0) + deficit
-            // update the sales metadata to include credit_added
+          if (hasCreditCol) {
+            // set customer's credit_due to the new outstanding (deficit). This avoids double-counting prior credit.
+            await client.query('UPDATE customers SET credit_due = $1 WHERE id = $2', [deficit.toFixed(2), safeUserId])
+            // annotate metadata with previous and new credit for audit
+            metadataWithLoyalty.previous_credit = priorCredit
+            metadataWithLoyalty.credit_added = deficit
+            // update the sales metadata to include credit info
             await client.query('UPDATE sales SET metadata = $1 WHERE id = $2', [metadataWithLoyalty || null, saleId])
           }
         } catch (e) {
@@ -217,10 +314,10 @@ router.post('/', async (req, res) => {
 module.exports = router;
 
 // Add list and detail endpoints
-// GET /api/sales - optional query: from, to (YYYY-MM-DD)
+// GET /api/sales - optional query: from, to (YYYY-MM-DD), payment_method
 router.get('/', async (req, res) => {
   if (!process.env.DATABASE_URL) return res.json([])
-  const { from, to } = req.query
+  const { from, to, payment_method } = req.query
   try {
     // join customers to expose name/phone/email alongside metadata for convenience
     let sql = `SELECT s.id, s.created_at, s.subtotal, s.tax_total, s.grand_total, s.payment_method, s.metadata,
@@ -236,6 +333,7 @@ router.get('/', async (req, res) => {
     }
     if (from) { params.push(from); clauses.push(`s.created_at::date >= $${params.length}`) }
     if (to) { params.push(to); clauses.push(`s.created_at::date <= $${params.length}`) }
+    if (payment_method) { params.push(payment_method); clauses.push(`s.payment_method = $${params.length}`) }
     if (clauses.length > 0) sql += ' WHERE ' + clauses.join(' AND ')
     sql += ' ORDER BY s.created_at DESC LIMIT 200'
     const r = await db.query(sql, params)
@@ -274,14 +372,21 @@ router.get('/:id', async (req, res) => {
   let items
   try {
     const hasStoreCol = schemaCache.hasColumn('sale_items', 'store_id')
+    const hasVariantCol = schemaCache.hasColumn('sale_items', 'variant_id')
+  // build columns selecting from sale_items (alias si) and coalesce mrp from sale_items -> products -> products.price
+  const baseCols = 'si.id, si.product_id' + (hasVariantCol ? ', si.variant_id' : '') + ', si.sku, si.name, si.qty, si.price, si.tax_percent, si.line_total'
+  const hasMrpCol = schemaCache.hasColumn('sale_items', 'mrp')
+  // only reference si.mrp when the column exists; otherwise fall back to product values
+  const mrpExpr = hasMrpCol ? ', COALESCE(si.mrp, p.mrp, p.price) AS mrp' : ', COALESCE(p.mrp, p.price) AS mrp'
     if (hasStoreCol && hasStore) {
-      items = await db.query('SELECT id, product_id, sku, name, qty, price, tax_percent, line_total FROM sale_items WHERE sale_id=$1 AND store_id=$2', [id, req.user.store_id])
+      items = await db.query(`SELECT ${baseCols}${mrpExpr} FROM sale_items si LEFT JOIN products p ON si.product_id = p.id WHERE si.sale_id=$1 AND si.store_id=$2`, [id, req.user.store_id])
     } else {
-      items = await db.query('SELECT id, product_id, sku, name, qty, price, tax_percent, line_total FROM sale_items WHERE sale_id=$1', [id])
+      items = await db.query(`SELECT ${baseCols}${mrpExpr} FROM sale_items si LEFT JOIN products p ON si.product_id = p.id WHERE si.sale_id=$1`, [id])
     }
   } catch (e) {
     // fallback: best-effort to return items
-    items = await db.query('SELECT id, product_id, sku, name, qty, price, tax_percent, line_total FROM sale_items WHERE sale_id=$1', [id])
+    const fallbackCols = 'id, product_id, sku, name, qty, price, tax_percent, line_total'
+    items = await db.query(`SELECT ${fallbackCols} FROM sale_items WHERE sale_id=$1`, [id])
   }
     const sale = s.rows[0]
     // merge customer info into metadata object for client convenience

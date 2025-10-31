@@ -42,7 +42,8 @@ test('variant created by purchase is visible via products/:id/variants and pos s
   const posItems = Array.isArray(pos.body) ? pos.body : (pos.body && pos.body.data) || []
   // Try matching either by product_id or by id==product id (pos returns id as product id sometimes)
   const posMatch = posItems.find(it => ((it.product_id === prodId || Number(it.id) === Number(prodId) || it.id === prodId) && (it.mrp != null && Number(it.mrp) === 110)) || (it.variant_id && Number(it.variant_id) && it.variant_id === found.id))
-  expect(posMatch).toBeTruthy()
+  const masterMatch = posItems.find(it => (it.product_id === prodId || Number(it.id) === Number(prodId) || it.id === prodId) && (it.mrp != null && Number(it.mrp) === 110))
+  expect(posMatch || masterMatch).toBeTruthy()
 
   // cleanup using helper
   const helpers = require('./testHelpers')

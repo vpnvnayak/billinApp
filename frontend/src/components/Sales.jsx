@@ -5,12 +5,9 @@ import ListControls from './ui/ListControls'
 import PaginationFooter from './ui/PaginationFooter'
 
 export default function Sales() {
-  const [outlet, setOutlet] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [type, setType] = useState('')
   const [paymentMethod, setPaymentMethod] = useState('')
-  const [gst, setGst] = useState('All')
   const [sales, setSales] = useState([])
   const [loading, setLoading] = useState(false)
   const [entries, setEntries] = useState(5)
@@ -33,9 +30,9 @@ export default function Sales() {
       const p = { ...params }
       if (from) p.from = from
       if (to) p.to = to
-      if (outlet) p.outlet = outlet
-      if (type) p.type = type
-      if (paymentMethod) p.paymentMethod = paymentMethod
+      // outlet filter removed - server will scope by store/user if needed
+  // send payment_method as snake_case to match backend
+  if (paymentMethod) p.payment_method = paymentMethod
       const r = await api.get('/sales', { params: p })
       setSales(r.data || [])
     } catch (err) {
@@ -112,12 +109,7 @@ export default function Sales() {
       <section className="card sales-filter" style={{ padding: 18, marginBottom: 12 }}>
         <h3 className="sales-filter-title">FILTER BY DATES</h3>
         <div className="sales-filter-row">
-          <div className="form-group form-outlet">
-            <label>Choose Outlet</label>
-            <select value={outlet} onChange={e => setOutlet(e.target.value)}>
-              <option value="">GROCA KUNDAMANKADAV</option>
-            </select>
-          </div>
+          {/* Choose Outlet removed - app uses current store context */}
 
           <div className="form-group">
             <label>From Date</label>
@@ -130,23 +122,12 @@ export default function Sales() {
           </div>
 
           <div className="form-group">
-            <label>Type</label>
-            <select value={type} onChange={e => setType(e.target.value)}>
-              <option value="">B2C</option>
-            </select>
-          </div>
-
-          <div className="form-group">
             <label>Payment Method</label>
             <select value={paymentMethod} onChange={e => setPaymentMethod(e.target.value)}>
-              <option value="">Payment Method</option>
-            </select>
-          </div>
-
-          <div className="form-group gst-group">
-            <label>GST/NON GST</label>
-            <select value={gst} onChange={e => setGst(e.target.value)}>
-              <option>All</option>
+              <option value="">All</option>
+              <option value="cash">Cash</option>
+              <option value="card">Card</option>
+              <option value="upi">UPI</option>
             </select>
           </div>
 
@@ -241,7 +222,7 @@ export default function Sales() {
                         if (r.data && r.data.sale) {
                           payload = { ...r.data.sale, sale_items: r.data.items || [] }
                         }
-                        try { printThermal(payload) } catch (e) { console.error('print error', e); import('../services/ui').then(m => m.showAlert('Error executing print function')) }
+                        try { printThermal(payload, payload.sale_items || payload.items || [], payload.metadata || {}) } catch (e) { console.error('print error', e); import('../services/ui').then(m => m.showAlert('Error executing print function')) }
                       } catch (err) { console.error(err); import('../services/ui').then(m => m.showAlert('Failed to fetch sale for printing')) }
                     }}>
                       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 9V3h12v6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><rect x="3" y="9" width="18" height="10" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M8 13h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>

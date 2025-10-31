@@ -24,7 +24,15 @@ export default function Customers() {
       if (search) params.q = search
       const r = await api.get('/customers', { params })
       if (r.data && Array.isArray(r.data.data)) {
-        setList(r.data.data)
+        // map and format aggregated fields for display (keep numeric values as numbers)
+        const mapped = r.data.data.map(rw => ({
+          ...rw,
+          total_purchases: Number(rw.total_purchases) || 0,
+          credit_due: Number(rw.credit_due) || 0,
+          // format last_purchase similar to suppliers list to avoid Date objects in JSX
+          last_purchase: rw.last_purchase ? (new Date(rw.last_purchase)).toLocaleString('en-IN') : null
+        }))
+        setList(mapped)
         setTotal(r.data.total || 0)
       } else {
         setList(r.data || [])
@@ -140,6 +148,7 @@ export default function Customers() {
                 <th className="email-cell">Email</th>
                 <th className="purchases-cell">Total Purchases</th>
                 <th className="last-purchase-cell">Last Purchase</th>
+                <th className="credit-cell">Credit</th>
                 <th className="loyalty-cell">Loyalty Points</th>
                 <th className="actions"> </th>
               </tr>
@@ -159,6 +168,7 @@ export default function Customers() {
                   <td className="email-cell">{c.email || '-'}</td>
                   <td className="purchases-cell">{c.total_purchases ? `₹ ${Number(c.total_purchases).toLocaleString('en-IN')}` : '₹ 0.00'}</td>
                   <td className="last-purchase-cell">{c.last_purchase || '-'}</td>
+                  <td className="credit-cell">{c.credit_due ? `₹ ${Number(c.credit_due).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '₹ 0.00'}</td>
                   <td className="loyalty-cell">{c.loyalty_points ? `${c.loyalty_points} points` : '0 points'}</td>
                   <td className="actions">
                     <div className="row-actions">
@@ -168,7 +178,7 @@ export default function Customers() {
                 </tr>
               ))}
               {filtered().length === 0 && (
-                <tr><td colSpan={6}>No customers found</td></tr>
+                <tr><td colSpan={7}>No customers found</td></tr>
               )}
             </tbody>
           </table>

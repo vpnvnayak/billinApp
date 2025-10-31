@@ -83,6 +83,29 @@ router.get('/products', async (req, res) => {
   const r = await db.query(sql, params)
         // normalize to same shape as previous API (id was product id) — keep id as product id but include mrp
   const rows = r.rows.map(rr => ({ id: rr.product_id, variant_id: rr.variant_id, sku: rr.sku, name: rr.name, price: rr.price, mrp: rr.mrp, unit: rr.unit, tax_percent: rr.tax_percent, stock: rr.stock }))
+  // Include master product entry when product-level stock exists (so cashier can choose master product too)
+  try {
+    const productIds = Array.from(new Set(rows.map(x => x.id)))
+    if (productIds.length > 0) {
+      const prodSql = storeId
+        ? `SELECT id, sku, name, price, mrp, unit, tax_percent, stock FROM products WHERE id = ANY($1) AND store_id = $2`
+        : `SELECT id, sku, name, price, mrp, unit, tax_percent, stock FROM products WHERE id = ANY($1)`
+      const prodParams = storeId ? [productIds, storeId] : [productIds]
+      const pres = await db.query(prodSql, prodParams)
+      for (const p of pres.rows) {
+        const pstock = Number(p.stock || 0)
+        if (pstock > 0) {
+          const exists = rows.some(rw => (rw.variant_id === null || rw.variant_id === undefined) && rw.id === p.id && Number(rw.stock || 0) === pstock)
+          if (!exists) {
+            rows.push({ id: p.id, variant_id: null, sku: p.sku, name: p.name, price: p.price, mrp: p.mrp, unit: p.unit, tax_percent: p.tax_percent, stock: pstock, is_master: true })
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // non-fatal: if product probe fails, continue returning variant rows
+    console.error('pos: failed to probe master product stock', e)
+  }
   if (process.env.NODE_ENV !== 'production') res.setHeader('X-Pos-Rows', String(rows.slice(0, limit).length))
   return res.json(rows.slice(0, limit))
       }
@@ -113,6 +136,28 @@ router.get('/products', async (req, res) => {
     const prodParams = storeId ? [term, storeId, limit] : [term, limit]
   const prodResp = await db.query(prodSql, prodParams)
   return res.json(prodResp.rows)
+      }
+      // Append master product entries when appropriate so POS can offer the product master as an option
+      try {
+        const productIds = Array.from(new Set(rows.map(x => x.id)))
+        if (productIds.length > 0) {
+          const prodSql = storeId
+            ? `SELECT id, sku, name, price, mrp, unit, tax_percent, stock FROM products WHERE id = ANY($1) AND store_id = $2`
+            : `SELECT id, sku, name, price, mrp, unit, tax_percent, stock FROM products WHERE id = ANY($1)`
+          const prodParams = storeId ? [productIds, storeId] : [productIds]
+          const pres = await db.query(prodSql, prodParams)
+          for (const p of pres.rows) {
+            const pstock = Number(p.stock || 0)
+            if (pstock > 0) {
+              const exists = rows.some(rw => (rw.variant_id === null || rw.variant_id === undefined) && rw.id === p.id && Number(rw.stock || 0) === pstock)
+              if (!exists) {
+                rows.push({ id: p.id, variant_id: null, sku: p.sku, name: p.name, price: p.price, mrp: p.mrp, unit: p.unit, tax_percent: p.tax_percent, stock: pstock, is_master: true })
+              }
+            }
+          }
+        }
+      } catch (e) {
+        console.error('pos: failed to probe master product stock for search results', e)
       }
       return res.json(rows)
     }

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import api from '../services/api'
+import { printThermal } from '../services/print'
 
 export default function POS() {
   // helper to format numbers as Indian rupees
@@ -15,6 +16,7 @@ export default function POS() {
   const [customerSuggestions, setCustomerSuggestions] = useState([])
   const [selectedCustomer, setSelectedCustomer] = useState(null)
   const [selectedCustomerLoyalty, setSelectedCustomerLoyalty] = useState(0)
+  const [selectedCustomerCredit, setSelectedCustomerCredit] = useState(0)
   const [showCreateCustomer, setShowCreateCustomer] = useState(false)
   const [newCustomerName, setNewCustomerName] = useState('')
   const [newCustomerPhone, setNewCustomerPhone] = useState('')
@@ -129,10 +131,13 @@ export default function POS() {
       // API may return either an array or a paginated object { data, total }
       if (r.data && Array.isArray(r.data.data)) {
         setCustomers(r.data.data)
-        // if selectedCustomer present, refresh loyalty value
+        // if selectedCustomer present, refresh loyalty and credit values
         if (selectedCustomer) {
           const found = (r.data.data || []).find(c => String(c.id) === String(selectedCustomer))
-          if (found) setSelectedCustomerLoyalty(Number(found.loyalty_points || 0))
+          if (found) {
+            setSelectedCustomerLoyalty(Number(found.loyalty_points || 0))
+            setSelectedCustomerCredit(Number(found.credit_due || 0))
+          }
         }
       } else if (Array.isArray(r.data)) {
         setCustomers(r.data)
@@ -217,28 +222,38 @@ export default function POS() {
       setCustomerSuggestions([])
       return
     }
-    // require minimum 3 characters to trigger suggestions
-    if (!q || q.length < 3) {
-      setCustomerSuggestions([])
-      return
+    // Show fast local matches immediately (helpful for phone or short queries),
+    // then debounce a server request for broader results when query is >= 3 chars.
+    if (!q) { setCustomerSuggestions([]); return }
+
+    // local filter: match by name OR phone (phone match ignores non-digits so typing partial numbers works)
+    const normQ = q.toLowerCase()
+    const digitsOnlyQ = (q.match(/\d+/g) || []).join('')
+    const localMatches = (customers || []).filter(c => {
+      const name = (c.name || '').toLowerCase()
+      const phoneRaw = (c.phone || '').toString()
+      const phoneDigits = (phoneRaw.match(/\d+/g) || []).join('')
+      // match name contains q OR phone digits contains typed digits OR exact id
+      if (name.includes(normQ)) return true
+      if (digitsOnlyQ && phoneDigits && phoneDigits.includes(digitsOnlyQ)) return true
+      if (String(c.id) === normQ) return true
+      return false
+    }).slice(0, 20)
+    setCustomerSuggestions(localMatches)
+
+    // if query is long enough, ask server for authoritative suggestions
+    if (q.length >= 3) {
+      customerTimer.current = setTimeout(async () => {
+        try {
+          const r = await api.get('/customers', { params: { q, limit: 20 } })
+          const data = (r.data && (Array.isArray(r.data.data) ? r.data.data : r.data)) || []
+          setCustomerSuggestions(data)
+        } catch (e) {
+          console.error('customer search failed', e)
+          // keep localMatches already set above as a fallback
+        }
+      }, 250)
     }
-    customerTimer.current = setTimeout(async () => {
-      try {
-        const r = await api.get('/customers', { params: { q, limit: 20 } })
-        const data = (r.data && (Array.isArray(r.data.data) ? r.data.data : r.data)) || []
-        setCustomerSuggestions(data)
-      } catch (e) {
-        console.error('customer search failed', e)
-        // fallback to client-side filter
-        const qq = q.toLowerCase()
-        const matches = (customers || []).filter(c => {
-          const name = (c.name || '').toLowerCase()
-          const phone = (c.phone || '').toLowerCase()
-          return name.includes(qq) || phone.includes(qq) || String(c.id) === qq
-        }).slice(0, 20)
-        setCustomerSuggestions(matches)
-      }
-    }, 250)
     return () => clearTimeout(customerTimer.current)
   }, [customerQuery, customers])
 
@@ -262,7 +277,8 @@ export default function POS() {
         // items and payment_breakdown might be persisted in sale.metadata
         const items = sale.items || sale.sale_items || (sale.metadata && sale.metadata.items) || []
         const pb = sale.payment_breakdown || sale.metadata || {}
-        printReceipt(sale, items, pb)
+    // delegate printing to shared print helper so receipt includes store header, customer and payment details
+    printThermal(sale, items, pb)
   } catch (e) { console.error('print handler error', e); import('../services/ui').then(m => m.showAlert('Failed to print')) }
     }
     if (typeof window !== 'undefined') {
@@ -326,8 +342,9 @@ export default function POS() {
     try {
       const r = await api.post('/customers', { name: nm.trim(), phone: ph || null, email: em || null })
       // ensure list updated and select newly created
-      setCustomers(s => Array.isArray(s) ? [r.data, ...s] : [r.data])
-      setSelectedCustomer(r.data.id)
+  setCustomers(s => Array.isArray(s) ? [r.data, ...s] : [r.data])
+  setSelectedCustomer(r.data.id)
+  setSelectedCustomerCredit(0)
       setShowCreateCustomer(false)
       setNewCustomerName('')
       setNewCustomerPhone('')
@@ -393,7 +410,7 @@ export default function POS() {
         const taxRate = (Number(it.tax_percent) || 0) / 100.0
         const priceInclusive = Number(it.price) || 0
         const unitExclusive = taxRate > 0 ? (priceInclusive / (1 + taxRate)) : priceInclusive
-        return ({ product_id: safeInt32(it.id), variant_id: it.variant_id || null, mrp: it.mrp != null ? Number(it.mrp) : null, sku: it.sku, name: it.name, qty: it.qty, price: Number(unitExclusive.toFixed(2)), tax_percent: it.tax_percent })
+        return ({ product_id: safeInt32(it.id), variant_id: it.variant_id || null, use_product_stock: !!it.is_master, mrp: it.mrp != null ? Number(it.mrp) : null, sku: it.sku, name: it.name, qty: it.qty, price: Number(unitExclusive.toFixed(2)), tax_percent: it.tax_percent })
       }),
       payment_method: payMethod,
       payment_breakdown: { card: Number(cardAmount)||0, cash: Number(cashGiven)||0, upi: Number(upiAmount)||0, discount_percent: Number(discountPercent)||0, discount_rs: Number(discountRs)||0, loyalty_used: Number(applyLoyaltyPoints)||0, remarks: remarks || '' },
@@ -404,7 +421,23 @@ export default function POS() {
       setSaleResult(r.data)
       // print receipt (A3) using snapshot of items and breakdown
       try {
-        printReceipt(r.data, payload.items, payload.payment_breakdown)
+        // use shared printer to include store header, items and payment breakdown
+        // server create response may not include customer fields; merge local customer info into metadata for printing
+        const printSale = Object.assign({}, r.data)
+        const meta = Object.assign({}, (r.data && r.data.metadata) || {})
+        if (selectedCustomer) {
+          const found = (customers || []).find(c => String(c.id) === String(selectedCustomer))
+          if (found) {
+            if (!meta.customer_name) meta.customer_name = found.name || ''
+            if (!meta.customer_phone) meta.customer_phone = found.phone || ''
+            if (meta.loyalty_available === undefined || meta.loyalty_available === null) meta.loyalty_available = Number(found.loyalty_points || 0)
+          }
+        } else if (customerQuery) {
+          // fallback to the typed customer query text
+          if (!meta.customer_name) meta.customer_name = customerQuery
+        }
+        printSale.metadata = meta
+        printThermal(printSale, payload.items, payload.payment_breakdown)
       } catch (e) {
         console.error('print failed', e)
       }
@@ -573,10 +606,24 @@ export default function POS() {
   // Payable should be rounded up to the next integer after applying discounts but before applying loyalty
   // then loyalty is subtracted and final payable is rounded up as well to an integer to match UI behavior.
   const payableBaseRounded = Math.ceil(payableBase)
-  const payable = Math.max(0, Math.ceil(payableBaseRounded - usableLoyalty))
+  const payableCurrent = Math.max(0, Math.ceil(payableBaseRounded - usableLoyalty))
   const paid = (Number(cardAmount) || 0) + (Number(upiAmount) || 0) + (Number(cashGiven) || 0)
-  const balanceToBePaid = Math.max(0, payable - paid)
-  const changeDue = Math.max(0, paid - payable)
+  // include any existing customer credit due into total due for mapped customers
+  const totalDue = payableCurrent + (Number(selectedCustomerCredit || 0))
+  const balanceToBePaid = Math.max(0, totalDue - paid)
+  const changeDue = Math.max(0, paid - totalDue)
+
+  // When opening payment modal for a mapped customer, auto-apply available loyalty upto payableBase
+  React.useEffect(() => {
+    if (showPay && selectedCustomer) {
+      try {
+        const maxUsable = Math.max(0, Math.min(Number(selectedCustomerLoyalty || 0), Math.floor(payableBase)))
+        if (!applyLoyaltyPoints || Number(applyLoyaltyPoints) === 0) {
+          setApplyLoyaltyPoints(maxUsable)
+        }
+      } catch (e) { /* ignore */ }
+    }
+  }, [showPay, selectedCustomer, selectedCustomerLoyalty, payableBase])
 
   return (
     <div className="pos-page">
@@ -656,17 +703,19 @@ export default function POS() {
                         customerSuppressRef.current = true
                         setSelectedCustomer(null)
                         setSelectedCustomerLoyalty(0)
+                        setSelectedCustomerCredit(0)
                         setCustomerQuery('')
                         setCustomerSuggestions([])
                       }}>Walk-in / None</div>
                       {customerSuggestions.map(c => (
                         <div key={c.id} className="pos-customer-suggestion" style={{ padding: 8, cursor: 'pointer', borderTop: '1px solid #eee' }} onMouseDown={() => {
                           // suppress further suggestions until user types
-                          customerSuppressRef.current = true
-                          setSelectedCustomer(c.id)
-                          setSelectedCustomerLoyalty(Number(c.loyalty_points || 0))
-                          setCustomerQuery(`${c.name || ''}${c.phone ? ' (' + c.phone + ')' : ''}`)
-                          setCustomerSuggestions([])
+                            customerSuppressRef.current = true
+                            setSelectedCustomer(c.id)
+                            setSelectedCustomerLoyalty(Number(c.loyalty_points || 0))
+                            setSelectedCustomerCredit(Number(c.credit_due || 0))
+                            setCustomerQuery(`${c.name || ''}${c.phone ? ' (' + c.phone + ')' : ''}`)
+                            setCustomerSuggestions([])
                         }}>
                           <div style={{ fontWeight: 600 }}>{c.name || 'Unnamed'}</div>
                           <div style={{ fontSize: 12, color: 'var(--color-muted)' }}>{c.phone || ''}</div>
@@ -711,7 +760,7 @@ export default function POS() {
                 <div className="pm-total"><div>Total Amount (incl. tax)</div><div className="pm-amt">{totalAmountRounded}.00</div></div>
                 <div className="pm-line discount-row"><div>Cash Discount %</div><div className="discount-controls"><input type="number" value={discountPercent} onChange={e => setDiscountPercent(e.target.value)} className="small-input" /><input type="number" value={discountRs} onChange={e => setDiscountRs(e.target.value)} className="small-input" placeholder="Rs" /></div></div>
                 <div className="pm-line"><div>Loyalty</div><div><input type="number" value={loyalty} onChange={e => setLoyalty(e.target.value)} className="small-input" /></div></div>
-                <div className="pm-line strong"><div>Payable Amount</div><div className="pm-amt">{payable}.00</div></div>
+                <div className="pm-line strong"><div>Payable Amount</div><div className="pm-amt">{payableCurrent}.00</div></div>
               </div>
               <div className="pm-right">
                 <div className="pm-paymethod">
@@ -726,7 +775,7 @@ export default function POS() {
                   <div className="pm-method">UPI</div>
                   <input type="number" value={upiAmount} onChange={e => setUpiAmount(e.target.value)} />
                 </div>
-                <div className="pm-line"><div>Bill Balance</div><div className="pm-amt">{(payable - paid).toFixed(2)}</div></div>
+                <div className="pm-line"><div>Bill Balance</div><div className="pm-amt">{(totalDue - paid).toFixed(2)}</div></div>
               </div>
             </div>
 
@@ -754,8 +803,13 @@ export default function POS() {
                 {changeDue > 0 ? <div>Change Due <span className="pm-change">{changeDue.toFixed(2)}</span></div> : null}
                 <div>Balance Amount To Be Paid <span className="pm-balance">{balanceToBePaid.toFixed(2)}</span></div>
               </div>
+              {/* Inform cashier when short payment will be added as customer credit */}
+              {selectedCustomer && paid < totalDue ? (
+                <div style={{ marginTop: 8, color: 'var(--color-muted)' }}>Note: Remaining ₹{(totalDue - paid).toFixed(2)} will be added to the customer's credit if you save.</div>
+              ) : null}
               <div className="pm-actions">
-                <button className="btn" onClick={submitPayment} disabled={payLoading || paid < payable}>{payLoading ? 'Processing...' : 'Save'}</button>
+                {/* Allow saving even if paid < payable when a customer is selected; backend will apply loyalty/credit. */}
+                <button className="btn" onClick={submitPayment} disabled={payLoading || (paid < totalDue && !selectedCustomer)}>{payLoading ? 'Processing...' : 'Save'}</button>
                 <button className="btn btn-ghost" onClick={() => setShowPay(false)} style={{ marginLeft: 8 }}>Close</button>
               </div>
             </div>
@@ -774,23 +828,49 @@ export default function POS() {
                 if (e.key === 'Enter') {
                   e.preventDefault()
                   const valRaw = mrpPrompt.value == null ? '' : String(mrpPrompt.value)
-                  const val = valRaw.replace(/,/g, '').trim()
-                  if (!val) { setMrpPrompt(s => ({ ...s, error: 'Enter MRP' })); return }
-                  const valNum = Number(val)
+                  // normalize by removing commas, currency symbols and whitespace
+                  const valNorm = valRaw.replace(/[,\s]/g, '').replace(/[^0-9.\-]/g, '')
+                  if (!valNorm) { setMrpPrompt(s => ({ ...s, error: 'Enter MRP' })); return }
+                  const valNum = Number(valNorm)
                   const match = mrpPrompt.group.find(p => {
-                    const pmRaw = p.mrp == null ? '' : String(p.mrp).replace(/,/g, '').trim()
-                    const pmNum = Number(pmRaw)
+                    const pmRaw = p.mrp == null ? '' : String(p.mrp)
+                    const pmNorm = pmRaw.replace(/[,\s]/g, '').replace(/[^0-9.\-]/g, '')
+                    const pmNum = Number(pmNorm)
                     if (Number.isFinite(pmNum) && Number.isFinite(valNum)) {
                       // numeric comparison tolerant to trailing .00
                       return Math.abs(pmNum - valNum) < 0.0001
                     }
-                    // fallback to exact string match
-                    return pmRaw !== '' && pmRaw === val
+                    // fallback to normalized string match
+                    return pmNorm !== '' && pmNorm === valNorm
                   })
                   if (match) {
-                    addProduct(match)
-                    setMrpPrompt(null)
+                    // ensure the matched variant or master has stock > 0
+                    const available = Number(match.stock || 0)
+                    if (available > 0) {
+                      addProduct(match)
+                      setMrpPrompt(null)
+                    } else {
+                      setMrpPrompt(s => ({ ...s, error: 'Selected MRP has no available stock' }))
+                    }
                   } else {
+                    // As a last resort, if a master product entry is present, attempt to match its MRP
+                    const masterMatch = mrpPrompt.group.find(p => p.is_master)
+                    if (masterMatch) {
+                      const pmRaw = masterMatch.mrp == null ? '' : String(masterMatch.mrp)
+                      const pmNorm = pmRaw.replace(/[,\s]/g, '').replace(/[^0-9.\-]/g, '')
+                      const pmNum = Number(pmNorm)
+                      if (Number.isFinite(pmNum) && Number.isFinite(valNum) && Math.abs(pmNum - valNum) < 0.0001) {
+                        const available = Number(masterMatch.stock || 0)
+                        if (available > 0) {
+                          addProduct(masterMatch)
+                          setMrpPrompt(null)
+                          return
+                        } else {
+                          setMrpPrompt(s => ({ ...s, error: 'Selected MRP has no available stock' }))
+                          return
+                        }
+                      }
+                    }
                     setMrpPrompt(s => ({ ...s, error: 'No product with matching MRP found' }))
                   }
                 }
@@ -799,21 +879,44 @@ export default function POS() {
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
                 <button className="btn" onClick={() => {
                   const valRaw = mrpPrompt.value == null ? '' : String(mrpPrompt.value)
-                  const val = valRaw.replace(/,/g, '').trim()
-                  if (!val) { setMrpPrompt(s => ({ ...s, error: 'Enter MRP' })); return }
-                  const valNum = Number(val)
+                  const valNorm = valRaw.replace(/[,\s]/g, '').replace(/[^0-9.\-]/g, '')
+                  if (!valNorm) { setMrpPrompt(s => ({ ...s, error: 'Enter MRP' })); return }
+                  const valNum = Number(valNorm)
                   const match = mrpPrompt.group.find(p => {
-                    const pmRaw = p.mrp == null ? '' : String(p.mrp).replace(/,/g, '').trim()
-                    const pmNum = Number(pmRaw)
+                    const pmRaw = p.mrp == null ? '' : String(p.mrp)
+                    const pmNorm = pmRaw.replace(/[,\s]/g, '').replace(/[^0-9.\-]/g, '')
+                    const pmNum = Number(pmNorm)
                     if (Number.isFinite(pmNum) && Number.isFinite(valNum)) {
                       return Math.abs(pmNum - valNum) < 0.0001
                     }
-                    return pmRaw !== '' && pmRaw === val
+                    return pmNorm !== '' && pmNorm === valNorm
                   })
                   if (match) {
-                    addProduct(match)
-                    setMrpPrompt(null)
+                    const available = Number(match.stock || 0)
+                    if (available > 0) {
+                      addProduct(match)
+                      setMrpPrompt(null)
+                    } else {
+                      setMrpPrompt(s => ({ ...s, error: 'Selected MRP has no available stock' }))
+                    }
                   } else {
+                    const masterMatch = mrpPrompt.group.find(p => p.is_master)
+                    if (masterMatch) {
+                      const pmRaw = masterMatch.mrp == null ? '' : String(masterMatch.mrp)
+                      const pmNorm = pmRaw.replace(/[,\s]/g, '').replace(/[^0-9.\-]/g, '')
+                      const pmNum = Number(pmNorm)
+                      if (Number.isFinite(pmNum) && Number.isFinite(valNum) && Math.abs(pmNum - valNum) < 0.0001) {
+                        const available = Number(masterMatch.stock || 0)
+                        if (available > 0) {
+                          addProduct(masterMatch)
+                          setMrpPrompt(null)
+                          return
+                        } else {
+                          setMrpPrompt(s => ({ ...s, error: 'Selected MRP has no available stock' }))
+                          return
+                        }
+                      }
+                    }
                     setMrpPrompt(s => ({ ...s, error: 'No product with matching MRP found' }))
                   }
                 }}>OK</button>
