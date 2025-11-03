@@ -64,6 +64,17 @@ async function run() {
   const keepUserIds = supRes.rows.map(r => r.id)
   console.log('Will preserve superadmin user ids:', keepUserIds.map(String).join(', '))
 
+  // Preserve refresh tokens belonging to preserved users (so superadmin stays logged in)
+  let preservedRefreshTokens = []
+  try {
+    const rtRes = await db.query(`SELECT token, user_id, expires_at FROM refresh_tokens WHERE user_id = ANY($1::int[])`, [keepUserIds])
+    preservedRefreshTokens = rtRes.rows || []
+    console.log('Found', preservedRefreshTokens.length, 'refresh tokens to preserve for superadmin users')
+  } catch (e) {
+    // table may not exist; ignore
+    preservedRefreshTokens = []
+  }
+
   // list all tables in public schema
   const tablesRes = await db.query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'")
   const allTables = tablesRes.rows.map(r => r.table_name)
@@ -110,6 +121,7 @@ async function run() {
   const outDir = path.join(__dirname, '..', 'backups', `clear-db-${ts}`)
   fs.mkdirSync(outDir, { recursive: true })
   fs.writeFileSync(path.join(outDir, 'preserve-users.json'), JSON.stringify(supRes.rows, null, 2))
+  fs.writeFileSync(path.join(outDir, 'preserve-refresh-tokens.json'), JSON.stringify(preservedRefreshTokens, null, 2))
   fs.writeFileSync(path.join(outDir, 'table-counts.json'), JSON.stringify(counts, null, 2))
   console.log('Wrote minimal backup metadata to', outDir)
 
@@ -139,6 +151,22 @@ async function run() {
     const roleId = r2.rows[0].id
     for (const uid of keepUserIds) {
       await db.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [uid, roleId])
+    }
+
+    // Restore preserved refresh tokens for superadmin users (if refresh_tokens table exists)
+    if (preservedRefreshTokens && preservedRefreshTokens.length) {
+      try {
+        for (const rt of preservedRefreshTokens) {
+          try {
+            await db.query('INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES ($1,$2,$3)', [rt.token, rt.user_id, rt.expires_at])
+          } catch (e) {
+            // ignore duplicate or insert errors
+          }
+        }
+        console.log('Restored', preservedRefreshTokens.length, 'refresh tokens for preserved users')
+      } catch (e) {
+        console.warn('Could not restore refresh tokens:', e && e.message)
+      }
     }
 
     console.log('\nDatabase cleared. Preserved superadmin user(s):', keepUserIds.join(', '))

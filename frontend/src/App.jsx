@@ -204,7 +204,7 @@ export default function App() {
   return (
     <UIProvider>
       <div className="app-layout">
-        <SideNav collapsed={sideCollapsed} onToggle={() => setSideCollapsed(s => { const nv = !s; try { localStorage.setItem('sideCollapsed', nv ? '1' : '0') } catch (e) {} return nv })} />
+        <SideNav user={user} collapsed={sideCollapsed} onToggle={() => setSideCollapsed(s => { const nv = !s; try { localStorage.setItem('sideCollapsed', nv ? '1' : '0') } catch (e) {} return nv })} />
         <div className={`app ${sideCollapsed ? 'nav-collapsed' : ''}`}>
           <div className="panel">
             <header>
@@ -249,9 +249,10 @@ export default function App() {
               })()}
               {route === '/sales' && <section className="products"><Sales /></section>}
               {route === '/reports' && <section className="products"><Reports /></section>}
+              {route === '/users' && <section className="products"><AdminUsers user={user} /></section>}
               {route === '/' && (
                 <section className="dashboard">
-                  <Dashboard />
+                  {user && Array.isArray(user.roles) && user.roles.includes('cashier') ? <POS /> : <Dashboard />}
                 </section>
               )}
               {route.startsWith('/settings') && <section className="products"><Settings /></section>}

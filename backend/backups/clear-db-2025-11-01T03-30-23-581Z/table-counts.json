@@ -1,0 +1,19 @@
+{
+  "migrations": 40,
+  "user_roles": 34,
+  "roles": 4,
+  "refresh_tokens": 43,
+  "products": 38,
+  "sales": 31,
+  "sale_items": 38,
+  "store_settings": 3,
+  "purchases": 10,
+  "purchase_items": 10,
+  "stores": 33,
+  "users": 35,
+  "customers": 2,
+  "suppliers": 2,
+  "stores_auth_backup": 0,
+  "product_variants": 10,
+  "password_reset_tokens": 0
+}

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react'
 import { UserIcon, CubeIcon, ReceiptPercentIcon, CurrencyDollarIcon, ChartBarIcon, CalendarDaysIcon, Bars3Icon, Cog6ToothIcon, ChartPieIcon } from '@heroicons/react/24/outline'
 
-export default function SideNav({ collapsed, onToggle }) {
+export default function SideNav({ collapsed, onToggle, user }) {
+  const rootRef = React.useRef()
   const links = [
     { name: 'Dashboard', icon: <ChartBarIcon className="h-5 w-5" />, to: '/' },
     { name: 'POS', icon: <CurrencyDollarIcon className="h-5 w-5" />, to: '/pos' },
@@ -14,7 +15,61 @@ export default function SideNav({ collapsed, onToggle }) {
     { name: 'Daybook', icon: <CalendarDaysIcon className="h-5 w-5" />, to: '/daybook' },
     { name: 'Reports', icon: <ChartPieIcon className="h-5 w-5" />, to: '/reports' }
   ]
-  const rootRef = useRef()
+  // show Users link only for superadmin or storeadmin
+  // normalize roles: backend returns array of strings, but accept array of objects too
+  let roles = (user && user.roles) || []
+  if (Array.isArray(roles) && roles.length > 0 && typeof roles[0] === 'object') {
+    roles = roles.map(r => (r && r.name) || String(r))
+  }
+  const isCashier = roles.includes('cashier')
+  if (roles.includes('superadmin') || roles.includes('storeadmin')) {
+    // insert Users link after Sales
+    const insertAt = links.findIndex(l => l.name === 'Sales')
+    const usersLink = { name: 'Users', icon: <UserIcon className="h-5 w-5" />, to: '/users' }
+    if (insertAt >= 0) links.splice(insertAt + 1, 0, usersLink)
+    else links.push(usersLink)
+  }
+  // if cashier, hide Dashboard and Reports
+  if (isCashier) {
+    return (
+      <aside ref={rootRef} className={`sidenav ${collapsed ? 'collapsed' : ''}`} aria-label="Primary">
+        <div className="sidenav-header">
+          <button className="hamburger" onClick={onToggle} aria-label={collapsed ? 'Expand navigation' : 'Collapse navigation'}><Bars3Icon className="h-5 w-5" /></button>
+          <div className="brand-wrap" style={{ marginLeft: collapsed ? 0 : 8 }}>
+            {!collapsed ? <h2 className="brand">DinoPos</h2> : null}
+          </div>
+        </div>
+        <nav className="sidenav-nav">
+          <ul>
+            {/* Only show POS, Sales, Contacts, Products, Stock etc for cashier */}
+            {links.filter(l => !['Dashboard', 'Reports', 'Users'].includes(l.name)).map(l => (
+              <li key={l.name}>
+                <a href="#" title={l.name} onClick={e => { 
+                  e.preventDefault(); 
+                  if (typeof window.__appNavigate === 'function') {
+                    window.__appNavigate(l.to)
+                    return
+                  }
+                  try { window.history.pushState(null, '', l.to) } catch (err) {}
+                  try { window.dispatchEvent(new CustomEvent('navigate', { detail: l.to })) } catch (err) { const ev = new PopStateEvent('popstate'); window.dispatchEvent(ev) }
+                }}>
+                  <span className="icon" aria-hidden>{l.icon}</span>
+                  <span className="label">{l.name}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+        <div className="sidenav-footer">
+          <a href="#" className="footer-link" onClick={e => { e.preventDefault(); try { window.__appNavigate('/settings') } catch(e){ try { window.history.pushState(null,'','/settings'); window.dispatchEvent(new CustomEvent('navigate',{detail:'/settings'})) } catch(err){} } }} title="Settings">
+            <span className="icon"><Cog6ToothIcon className="h-5 w-5" /></span>
+            <span className="label">Settings</span>
+          </a>
+        </div>
+      </aside>
+    )
+  }
+  
 
   useEffect(() => {
     const el = rootRef.current
