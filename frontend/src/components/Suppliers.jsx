@@ -10,6 +10,7 @@ export default function Suppliers() {
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
   const [website, setWebsite] = useState('')
+  const [total, setTotal] = useState(0)
   const [execName, setExecName] = useState('')
   const [phone1, setPhone1] = useState('')
   const [phone2, setPhone2] = useState('')
@@ -27,8 +28,10 @@ export default function Suppliers() {
   async function load() {
     setLoading(true)
     try {
-      const res = await api.get('/suppliers/aggregates')
-      const rows = res.data || []
+      const params = { page, limit: entries }
+      if (search) params.q = search
+      const res = await api.get('/suppliers/aggregates', { params })
+      const rows = (res && res.data && Array.isArray(res.data.data)) ? res.data.data : (res && Array.isArray(res.data) ? res.data : [])
       const mapped = rows.map(r => ({
         id: r.supplier_id,
         name: r.name,
@@ -44,6 +47,7 @@ export default function Suppliers() {
         created_at: r.created_at || null
       }))
       setList(mapped)
+      setTotal((res && res.data && res.data.total) || (rows && rows.length) || 0)
     } catch (e) {
       console.error(e)
     } finally {
@@ -51,14 +55,7 @@ export default function Suppliers() {
     }
   }
 
-  useEffect(() => {
-    let mounted = true
-    ;(async () => {
-      if (!mounted) return
-      await load()
-    })()
-    return () => { mounted = false }
-  }, [])
+  useEffect(() => { load() }, [page, entries, search])
 
   async function create() {
     try {
@@ -100,14 +97,15 @@ export default function Suppliers() {
     const q = (search || '').trim().toLowerCase()
     let res = list
     if (q) res = list.filter(c => (c.name || '').toLowerCase().includes(q) || (c.email||'').toLowerCase().includes(q) || (c.phone||'').toLowerCase().includes(q))
-    const start = ((page || 1) - 1) * (entries || 10)
-    return res.slice(start, start + (entries || 10))
+    return res
   }
 
   function openEdit(s) {
     setEditId(s.id)
     setName(s.name || '')
-    setPhone(s.phone || s.phone1 || '')
+    // Do not prefill primary phone from phone1 when editing.
+    // Only populate the phone input if the supplier has an explicit `phone` value.
+    setPhone(s.phone || '')
     setEmail(s.email || '')
     setWebsite(s.website || '')
     setExecName(s.executive_name || '')
@@ -214,7 +212,7 @@ export default function Suppliers() {
                       </div>
                     </div>
                   </td>
-                  <td className="phone-cell">{c.phone1 || '-'}</td>
+                  <td className="phone-cell">{c.phone || c.phone1 || '-'}</td>
                   <td className="email-cell">{c.email || '-'}</td>
                   <td className="purchases-cell">{c.total_purchases ? `₹ ${Number(c.total_purchases).toLocaleString('en-IN')}` : '₹ 0.00'}</td>
                   <td className="credit-cell">{c.credit_due ? `₹ ${Number(c.credit_due).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '₹ 0.00'}</td>
@@ -234,7 +232,7 @@ export default function Suppliers() {
           </table>
         </div>
         <div style={{ padding: '8px 16px' }}>
-          <PaginationFooter total={list.length} page={page} pageSize={entries} onPageChange={p => setPage(p)} onPageSizeChange={s => { setEntries(s); setPage(1) }} />
+          <PaginationFooter total={total} page={page} pageSize={entries} onPageChange={p => setPage(p)} onPageSizeChange={s => { setEntries(s); setPage(1) }} />
         </div>
       </div>
 

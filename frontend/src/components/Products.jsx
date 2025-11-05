@@ -62,19 +62,25 @@ export default function Products() {
     setExpanded(es => ({ ...es, [pid]: true }))
   }
 
+  // Use the server-returned page of products directly. The server already
+  // handles `page` and `limit` (entries) so we must not slice again here.
+  // We still apply a small client-side filter for the repackOnly toggle
+  // (server doesn't support that filter yet) and fallback search when
+  // server-side search isn't used.
   const filtered = (() => {
     const q = (query || '').trim().toLowerCase()
-    let res = products
+    let res = products || []
+    // When query is present we already send it to the server in fetchProducts.
+    // As a defensive fallback apply the filter on the returned page too.
     if (q) {
-      res = products.filter(
+      res = res.filter(
         p =>
           String(p.sku).toLowerCase().includes(q) ||
           (p.name || '').toLowerCase().includes(q)
       )
     }
     if (repackOnly) res = res.filter(p => p.is_repacking === true)
-    const start = ((page || 1) - 1) * (entries || 10)
-    return res.slice(start, start + (entries || 10))
+    return res
   })()
 
   return (
@@ -174,7 +180,7 @@ export default function Products() {
       <div className="kpi-row">
         <div className="kpi-card">
           <div className="kpi-label">Total Products</div>
-          <div className="kpi-value">{products.length}</div>
+          <div className="kpi-value">{total}</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">Total Stock Value</div>

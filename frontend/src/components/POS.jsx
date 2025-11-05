@@ -698,8 +698,8 @@ export default function POS() {
                   />
                   {/* suggestions dropdown */}
                   {customerSuggestions && customerSuggestions.length > 0 && (
-                    <div className="pos-customer-suggestions" style={{ position: 'absolute', zIndex: 40, background: '#fff', boxShadow: '0 2px 6px rgba(0,0,0,0.15)', width: '100%', maxHeight: 260, overflow: 'auto' }}>
-                      <div key="none" className="pos-customer-suggestion" style={{ padding: 8, cursor: 'pointer' }} onMouseDown={() => {
+                    <div className="pos-customer-suggestions">
+                      <div key="none" className="pos-customer-suggestion" onMouseDown={() => {
                         customerSuppressRef.current = true
                         setSelectedCustomer(null)
                         setSelectedCustomerLoyalty(0)
@@ -708,7 +708,12 @@ export default function POS() {
                         setCustomerSuggestions([])
                       }}>Walk-in / None</div>
                       {customerSuggestions.map(c => (
-                        <div key={c.id} className="pos-customer-suggestion" style={{ padding: 8, cursor: 'pointer', borderTop: '1px solid #eee' }} onMouseDown={() => {
+                        <div key={c.id} className={`pos-customer-suggestion ${c.disabled ? 'disabled' : ''}`} onMouseDown={() => {
+                          // if disabled, do not allow selection and show a small notice
+                          if (c.disabled) {
+                            import('../services/ui').then(m => m.showAlert('This customer is disabled and cannot be selected in POS'))
+                            return
+                          }
                           // suppress further suggestions until user types
                             customerSuppressRef.current = true
                             setSelectedCustomer(c.id)
@@ -717,7 +722,12 @@ export default function POS() {
                             setCustomerQuery(`${c.name || ''}${c.phone ? ' (' + c.phone + ')' : ''}`)
                             setCustomerSuggestions([])
                         }}>
-                          <div style={{ fontWeight: 600 }}>{c.name || 'Unnamed'}</div>
+                          <div className="pos-cs-row">
+                            <div style={{ fontWeight: 600 }}>{c.name || 'Unnamed'}</div>
+                            {c.disabled ? (
+                              <div className="pos-disabled-pill">Disabled</div>
+                            ) : null}
+                          </div>
                           <div style={{ fontSize: 12, color: 'var(--color-muted)' }}>{c.phone || ''}</div>
                         </div>
                       ))}

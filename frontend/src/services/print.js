@@ -48,10 +48,10 @@ export function buildThermalHtml(sale = {}, store = {}, payment_breakdown = {}, 
   // store param takes precedence, then cached settings, then built-in fallback
   const s = (store && Object.keys(store).length) ? store : (storeSettingsCache || {})
   const fallback = {
-    name: 'GROCA\nKUNDAMANKADAV',
-    address: 'Ground Floor, Devi Arcade,\nkundamankadavu, Trivandrum-695013',
-    contact: '9567171729',
-    gst: 'GSTIN: 32AALCG0917G1ZW'
+    name: 'Store\nName',
+    address: 'Address 1\naddress 2, City-000000',
+    contact: '9876543210',
+    gst: 'GSTIN: xxxxxxxxxx'
   }
   const merged = Object.assign({}, fallback, s)
 

@@ -69,6 +69,20 @@ body { font-family: 'Outfit', Inter, 'Segoe UI', Roboto, Arial, Helvetica, sans-
 .lc-toggle span { padding: 4px 8px; border-radius: 12px; background: #eee }
 .lc-toggle.active span { background: var(--color-success); color: white }
 .lc-toggle.inactive span { background: var(--color-danger); color: white }
+
+/* POS customer suggestion dropdown and disabled pill */
+.pos-customer-suggestions { position: absolute; z-index: 40; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.15); width: 100%; max-height: 260px; overflow: auto; border-radius: 6px }
+.pos-customer-suggestion { padding: 8px; cursor: pointer }
+.pos-customer-suggestion + .pos-customer-suggestion { border-top: 1px solid #eee }
+.pos-customer-suggestion.disabled { cursor: not-allowed; opacity: 0.7 }
+.pos-customer-suggestion .pos-cs-row { display: flex; align-items: center; justify-content: space-between }
+.pos-disabled-pill { background: #e74c3c; color: #fff; padding: 2px 8px; border-radius: 999px; font-size: 12px }
+
+/* Toggle button used in customer modal */
+.toggle-btn { color: #fff; border: none; padding: 6px 10px; border-radius: 999px; cursor: pointer; font-size: 12px }
+.toggle-btn.on { background: #2ecc71 }
+.toggle-btn.off { background: #e74c3c }
+.toggle-btn:disabled { opacity: 0.6; cursor: default }
 .table-footer { display: flex; justify-content: space-between; padding: 12px 0 }
 .pagination .btn { background: var(--color-primary-600) }
 

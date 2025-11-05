@@ -7,20 +7,27 @@ const tx = require('../tx')
 
 // GET /api/purchases - list purchases (basic)
 router.get('/', async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.json([])
+  if (!process.env.DATABASE_URL) return res.json({ data: [], total: 0 })
   try {
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 50))
+    const offset = (page - 1) * limit
     // join supplier for convenience if available
     // If the request is authenticated and has a store_id, scope results to that store
     const hasStore = req.user && req.user.store_id
     let sql = `SELECT p.id, p.created_at, p.total_amount, p.metadata, s.id AS supplier_id, s.name AS supplier_name FROM purchases p LEFT JOIN suppliers s ON p.supplier_id = s.id`
     const params = []
     if (hasStore) {
-      sql += ` WHERE p.store_id = $1`
       params.push(req.user.store_id)
+      sql += ` WHERE p.store_id = $${params.length}`
     }
-    sql += ` ORDER BY p.created_at DESC LIMIT 200`
-    const r = await db.query(sql, params)
-    res.json(r.rows)
+    // include total_count window so we can return the total without a separate COUNT query
+    const wrapped = `SELECT q.*, COUNT(*) OVER() AS total_count FROM (${sql}) q ORDER BY q.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
+    params.push(limit, offset)
+    const r = await db.query(wrapped, params)
+    const total = r.rows.length ? Number(r.rows[0].total_count || 0) : 0
+    const rows = r.rows.map(rr => { const { total_count, ...rest } = rr; return rest })
+    res.json({ data: rows, total })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'internal error' })

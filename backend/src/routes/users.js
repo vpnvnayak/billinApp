@@ -15,26 +15,32 @@ function isElevated(roles) {
 router.get('/', requireAuth, async (req, res) => {
   if (!isElevated(req.user && req.user.roles)) return res.status(403).json({ error: 'Forbidden' })
   try {
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit) || 50))
+    const offset = (page - 1) * limit
     // Return users with an aggregated array of role names
     // Superadmin sees all users; other admins see only users for their store
     const isSuper = req.user && Array.isArray(req.user.roles) && req.user.roles.includes('superadmin')
     if (isSuper) {
-      const r = await db.query(`
+      const inner = `
         SELECT u.id, u.email, u.username, u.phone, u.full_name, u.created_at,
                COALESCE(array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[]) AS roles
         FROM users u
         LEFT JOIN user_roles ur ON ur.user_id = u.id
         LEFT JOIN roles r ON r.id = ur.role_id
         GROUP BY u.id
-        ORDER BY u.id DESC
-      `)
-      return res.json(r.rows)
+      `
+      const sql = `SELECT t.*, COUNT(*) OVER() AS total_count FROM (${inner}) t ORDER BY t.id DESC LIMIT $1 OFFSET $2`
+      const r = await db.query(sql, [limit, offset])
+      const total = r.rows.length ? Number(r.rows[0].total_count || 0) : 0
+      const rows = r.rows.map(rr => { const { total_count, ...rest } = rr; return rest })
+      return res.json({ data: rows, total })
     }
 
     // non-super admins: scope to store
     const storeId = req.user && req.user.store_id ? req.user.store_id : null
     if (!storeId) return res.status(403).json({ error: 'Forbidden' })
-    const r = await db.query(`
+    const inner = `
       SELECT u.id, u.email, u.username, u.phone, u.full_name, u.created_at,
              COALESCE(array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL), ARRAY[]::text[]) AS roles
       FROM users u
@@ -42,9 +48,12 @@ router.get('/', requireAuth, async (req, res) => {
       LEFT JOIN roles r ON r.id = ur.role_id
       WHERE u.store_id = $1
       GROUP BY u.id
-      ORDER BY u.id DESC
-    `, [storeId])
-    res.json(r.rows)
+    `
+    const sql = `SELECT t.*, COUNT(*) OVER() AS total_count FROM (${inner}) t ORDER BY t.id DESC LIMIT $2 OFFSET $3`
+    const r = await db.query(sql, [storeId, limit, offset])
+    const total = r.rows.length ? Number(r.rows[0].total_count || 0) : 0
+    const rows = r.rows.map(rr => { const { total_count, ...rest } = rr; return rest })
+    res.json({ data: rows, total })
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });

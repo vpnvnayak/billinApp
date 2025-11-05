@@ -137,7 +137,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const userId = req.user.sub;
-  const result = await db.query('SELECT id, email, full_name, store_id FROM users WHERE id = $1', [userId]);
+  const result = await db.query('SELECT id, email, full_name, phone, store_id FROM users WHERE id = $1', [userId]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const user = result.rows[0];
     const r = await db.query(
@@ -145,12 +145,63 @@ router.get('/me', requireAuth, async (req, res) => {
       [user.id]
     );
     const roles = r.rows.map(x => x.name);
-  res.json({ id: user.id, email: user.email, full_name: user.full_name, roles, store_id: user.store_id });
+  res.json({ id: user.id, email: user.email, full_name: user.full_name, phone: user.phone, roles, store_id: user.store_id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+// PUT /api/auth/me - update current user's profile (name, email, phone) and optionally change password
+router.put('/me', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.sub
+    const { full_name, email, phone, current_password, new_password } = req.body || {}
+    const client = await db.pool.connect()
+    try {
+      await client.query('BEGIN')
+      // If changing password, verify current_password
+      if (new_password) {
+        if (!current_password) {
+          await client.query('ROLLBACK')
+          return res.status(400).json({ error: 'current_password is required to change password' })
+        }
+        const r = await client.query('SELECT password_hash FROM users WHERE id = $1', [userId])
+        if (r.rows.length === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'User not found' }) }
+        const ok = await bcrypt.compare(current_password, r.rows[0].password_hash)
+        if (!ok) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'current password is incorrect' }) }
+        if (typeof new_password !== 'string' || new_password.length < 6) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'new password must be at least 6 characters' }) }
+        const newHash = await bcrypt.hash(new_password, 10)
+        await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [newHash, userId])
+      }
+
+      // Update profile fields if provided
+      const parts = []
+      const vals = []
+      let i = 1
+      if (full_name !== undefined) { parts.push(`full_name = $${i++}`); vals.push(full_name || null) }
+      if (email !== undefined) { parts.push(`email = $${i++}`); vals.push(email || null) }
+      if (phone !== undefined) { parts.push(`phone = $${i++}`); vals.push(phone || null) }
+      if (parts.length) {
+        vals.push(userId)
+        await client.query(`UPDATE users SET ${parts.join(', ')} WHERE id = $${vals.length}`, vals)
+      }
+      await client.query('COMMIT')
+      // return updated user summary
+      const ures = await db.query('SELECT id, email, full_name, phone, store_id FROM users WHERE id = $1', [userId])
+      const user = ures.rows[0]
+      res.json({ id: user.id, email: user.email, full_name: user.full_name, phone: user.phone, store_id: user.store_id })
+    } catch (e) {
+      await client.query('ROLLBACK')
+      throw e
+    } finally {
+      client.release()
+    }
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
 
 // Refresh access token
 // Refresh via HttpOnly cookie; rotates refresh token

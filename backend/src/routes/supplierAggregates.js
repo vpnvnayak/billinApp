@@ -4,8 +4,11 @@ const db = require('../db')
 
 // GET /api/suppliers/aggregates - returns per-supplier aggregated metrics
 router.get('/', async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.json([])
+  if (!process.env.DATABASE_URL) return res.json({ data: [], total: 0 })
   try {
+    const page = Math.max(1, Number(req.query.page) || 1)
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 10))
+    const offset = (page - 1) * limit
     // total_purchases: sum of purchases.total_amount
     // credit_due: sum of (total_amount - paid) where paid is stored in metadata->paid
     // last_purchase: most recent created_at
@@ -34,10 +37,18 @@ router.get('/', async (req, res) => {
       sql += `LEFT JOIN purchases p ON p.supplier_id = s.id`
     }
 
-    sql += `\n      GROUP BY s.id, s.name, s.phone, s.phone1, s.phone2, s.email, s.website, s.created_at\n      ORDER BY s.name\n    `
+    sql += `\n      GROUP BY s.id, s.name, s.phone, s.phone1, s.phone2, s.email, s.website, s.created_at\n    `
 
-    const r = await db.query(sql, params)
-    res.json(r.rows)
+    // Wrap aggregated query to apply LIMIT/OFFSET and compute total_count
+    const outerSql = `SELECT t.*, COUNT(*) OVER() AS total_count FROM (${sql}) t ORDER BY t.name LIMIT $${params.length + 1} OFFSET $${params.length + 2}`
+    params.push(limit, offset)
+    const r = await db.query(outerSql, params)
+    const total = r.rows.length ? Number(r.rows[0].total_count || 0) : 0
+    const rows = r.rows.map(rr => {
+      const { total_count, ...rest } = rr
+      return rest
+    })
+    res.json({ data: rows, total })
   } catch (err) {
     console.error('Failed to compute supplier aggregates', err)
     res.status(500).json({ error: 'internal error' })

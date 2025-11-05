@@ -21,7 +21,7 @@ router.get('/', async (req, res) => {
     const params = []
     if (q) {
       params.push(`%${q}%`)
-      where = `WHERE name ILIKE $1 OR email ILIKE $1 OR phone ILIKE $1`
+      where = `WHERE (name ILIKE $1 OR email ILIKE $1 OR phone ILIKE $1)`
     }
     // scope by store if user has store_id
     const storeId = req.user && req.user.store_id ? req.user.store_id : null
@@ -30,11 +30,12 @@ router.get('/', async (req, res) => {
       else where = 'WHERE store_id = $' + (params.length + 1)
       params.push(storeId)
     }
+  // Note: include disabled customers in listings so UI can show their status
     const offset = (page - 1) * limit
     // Use window function to get total count in same query
     // include per-customer aggregates: total_purchases (sum of sales.grand_total) and last_purchase (most recent sale)
     // use correlated subqueries so we can keep the existing pagination/window-count logic
-    const sql = `SELECT id, name, phone, email, created_at, loyalty_points, COALESCE(credit_due,0)::numeric(14,2) AS credit_due,
+    const sql = `SELECT id, name, phone, email, created_at, loyalty_points, disabled, COALESCE(credit_due,0)::numeric(14,2) AS credit_due,
       COALESCE((SELECT SUM(COALESCE(s.grand_total,0)) FROM sales s WHERE s.user_id = customers.id ${storeId ? 'AND s.store_id = customers.store_id' : ''}),0)::numeric(14,2) AS total_purchases,
       (SELECT MAX(s.created_at) FROM sales s WHERE s.user_id = customers.id ${storeId ? 'AND s.store_id = customers.store_id' : ''}) AS last_purchase,
       COUNT(*) OVER() AS total_count
@@ -57,8 +58,8 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
   const { name, phone, email, loyalty_points } = req.body || {}
-    if (!name || typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name is required' })
-    if (!phone || typeof phone !== 'string' || !phone.trim()) return res.status(400).json({ error: 'phone is required' })
+  if (!name || typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name is required' })
+  // phone is optional; allow null/empty
     if (!process.env.DATABASE_URL) {
       return res.status(201).json({ id: Date.now(), name, phone: phone || null, email: email || null })
     }
@@ -121,6 +122,44 @@ router.get('/aggregates', async (req, res) => {
     res.json({ total_customers, active_customers_30d, avg_spend, new_customers_30d, loyalty_members })
   } catch (err) {
     console.error('customers aggregates failed', err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+// PUT /api/customers/:id - update customer (scoped to store if applicable)
+router.put('/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    if (!id) return res.status(400).json({ error: 'invalid id' })
+  const { name, phone, email, loyalty_points, disabled } = req.body || {}
+    if (!name || typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'name is required' })
+
+    const storeId = req.user && req.user.store_id ? req.user.store_id : null
+    // Build update query with optional loyalty_points
+    const lp = (loyalty_points !== undefined) ? Number(loyalty_points) : null
+    if (storeId) {
+      if (lp !== null) {
+        const r = await db.query('UPDATE customers SET name=$1, phone=$2, email=$3, loyalty_points=$5' + (disabled !== undefined ? ', disabled=$6' : '') + ' WHERE id=$4 AND store_id=$7 RETURNING id, name, phone, email, created_at, loyalty_points, disabled', disabled !== undefined ? [name.trim(), phone || null, email || null, id, lp, disabled, storeId] : [name.trim(), phone || null, email || null, id, lp, storeId])
+        if (!r.rows.length) return res.status(404).json({ error: 'customer not found' })
+        return res.json(r.rows[0])
+      } else {
+        const r = await db.query('UPDATE customers SET name=$1, phone=$2, email=$3' + (disabled !== undefined ? ', disabled=$5' : '') + ' WHERE id=$4 AND store_id=$6 RETURNING id, name, phone, email, created_at, loyalty_points, disabled', disabled !== undefined ? [name.trim(), phone || null, email || null, id, disabled, storeId] : [name.trim(), phone || null, email || null, id, storeId])
+        if (!r.rows.length) return res.status(404).json({ error: 'customer not found' })
+        return res.json(r.rows[0])
+      }
+    } else {
+      if (lp !== null) {
+        const r = await db.query('UPDATE customers SET name=$1, phone=$2, email=$3, loyalty_points=$5' + (disabled !== undefined ? ', disabled=$6' : '') + ' WHERE id=$4 RETURNING id, name, phone, email, created_at, loyalty_points, disabled', disabled !== undefined ? [name.trim(), phone || null, email || null, id, lp, disabled] : [name.trim(), phone || null, email || null, id, lp])
+        if (!r.rows.length) return res.status(404).json({ error: 'customer not found' })
+        return res.json(r.rows[0])
+      } else {
+        const r = await db.query('UPDATE customers SET name=$1, phone=$2, email=$3' + (disabled !== undefined ? ', disabled=$5' : '') + ' WHERE id=$4 RETURNING id, name, phone, email, created_at, loyalty_points, disabled', disabled !== undefined ? [name.trim(), phone || null, email || null, id, disabled] : [name.trim(), phone || null, email || null, id])
+        if (!r.rows.length) return res.status(404).json({ error: 'customer not found' })
+        return res.json(r.rows[0])
+      }
+    }
+  } catch (err) {
+    console.error('customers update failed', err)
     res.status(500).json({ error: 'Internal server error' })
   }
 })

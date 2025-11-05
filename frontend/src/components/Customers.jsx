@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import api from '../services/api'
+import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
 import ListControls from './ui/ListControls'
 import PaginationFooter from './ui/PaginationFooter'
 import { useUI } from './ui/UIProvider'
@@ -10,12 +11,17 @@ export default function Customers() {
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [email, setEmail] = useState('')
+  const [phoneError, setPhoneError] = useState('')
+  const [emailError, setEmailError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
+  const [editId, setEditId] = useState(null)
+  const [disabledState, setDisabledState] = useState(false)
   const [search, setSearch] = useState('')
   const [entries, setEntries] = useState(10)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  
 
   async function load() {
     try {
@@ -81,27 +87,87 @@ export default function Customers() {
 
   async function create() {
     if (!name.trim()) return import('../services/ui').then(m => m.showAlert('Name is required'))
+    // validate phone (optional) and email (optional)
+    setPhoneError('')
+    setEmailError('')
+    const isValidEmail = (v) => {
+      if (!v) return true
+      // basic RFC-5322-ish simple regex for common emails
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)
+    }
+    const isValidPhone = (v) => {
+      if (!v) return true
+      // allow digits, spaces, +, -, parentheses; require 7-15 digits total
+      const digits = (v.match(/\d/g) || []).length
+      if (digits < 7 || digits > 15) return false
+      return /^[0-9+()\-\s]+$/.test(v)
+    }
+    if (email && !isValidEmail(email.trim())) {
+      setEmailError('Invalid email format')
+      return
+    }
+    if (phone && !isValidPhone(phone.trim())) {
+      setPhoneError('Invalid phone number')
+      return
+    }
     try {
       setLoading(true)
-      const r = await api.post('/customers', { name: name.trim(), phone: phone.trim() || null, email: email.trim() || null })
+      if (editId) {
+        await api.put(`/customers/${editId}`, { name: name.trim(), phone: phone.trim() || null, email: email.trim() || null, disabled: !!disabledState })
+      } else {
+        await api.post('/customers', { name: name.trim(), phone: phone.trim() || null, email: email.trim() || null })
+      }
       setName(''); setPhone(''); setEmail('')
+      setPhoneError(''); setEmailError('')
       // refresh list
       await load()
       // dispatch an event so other components (POS) can refresh
       try { window.dispatchEvent(new CustomEvent('customers:changed')) } catch (e) {}
-      setShowCreate(false)
-  } catch (e) { console.error(e); import('../services/ui').then(m => m.showAlert('Failed to create')) } finally { setLoading(false) }
+    setShowCreate(false)
+    setEditId(null)
+    setDisabledState(false)
+  } catch (e) { console.error(e); import('../services/ui').then(m => m.showAlert(editId ? 'Failed to save' : 'Failed to create')) } finally { setLoading(false) }
+  }
+
+  function openEdit(c) {
+    setEditId(c.id)
+    setName(c.name || '')
+    setPhone(c.phone || '')
+    setEmail(c.email || '')
+    setDisabledState(!!c.disabled)
+    setPhoneError('')
+    setEmailError('')
+    setShowCreate(true)
   }
 
   function filtered() {
     return list
   }
 
+  async function toggleDisabled(c) {
+    const confirmMsg = c.disabled ? `Enable customer ${c.name}?` : `Disable customer ${c.name}?`
+    if (!window.confirm(confirmMsg)) return
+    setToggling(prev => ({ ...prev, [c.id]: true }))
+    try {
+      const payload = { name: c.name || '', phone: c.phone || null, email: c.email || null, disabled: !c.disabled }
+      const r = await api.put(`/customers/${c.id}`, payload)
+      // show notification and refresh
+      import('../services/ui').then(m => m.showSnackbar(`${r.data.name} ${r.data.disabled ? 'disabled' : 'enabled'}`, 'success'))
+      await load()
+      try { window.dispatchEvent(new CustomEvent('customers:changed')) } catch (e) {}
+    } catch (err) {
+      console.error(err)
+      import('../services/ui').then(m => m.showAlert('Failed to update customer'))
+    } finally {
+      setToggling(prev => { const np = { ...prev }; delete np[c.id]; return np })
+    }
+  }
+
   return (
   <div className="page contacts-page">
       <div className="page-header">
-        <div className="page-header-actions">
-          <button className="btn success add-customer-btn" onClick={() => setShowCreate(true)}>+ Add Customer</button>
+          <div className="page-header-actions">
+          <button className="btn success add-customer-btn" onClick={() => { setEditId(null); setDisabledState(false); setShowCreate(true) }}>+ Add Customer</button>
         </div>
       </div>
 
@@ -150,7 +216,8 @@ export default function Customers() {
                 <th className="last-purchase-cell">Last Purchase</th>
                 <th className="credit-cell">Credit</th>
                 <th className="loyalty-cell">Loyalty Points</th>
-                <th className="actions"> </th>
+                <th className="disabled-cell">Disabled</th>
+                <th className="actions">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -170,15 +237,17 @@ export default function Customers() {
                   <td className="last-purchase-cell">{c.last_purchase || '-'}</td>
                   <td className="credit-cell">{c.credit_due ? `₹ ${Number(c.credit_due).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '₹ 0.00'}</td>
                   <td className="loyalty-cell">{c.loyalty_points ? `${c.loyalty_points} points` : '0 points'}</td>
+                  <td className="disabled-cell">{c.disabled ? 'Yes' : 'No'}</td>
                   <td className="actions">
                     <div className="row-actions">
-                      <button className="btn btn-ghost">Edit</button>
+                      <button className="btn small" title="Edit" onClick={() => openEdit(c)}><PencilIcon style={{ width: 16, height: 16 }} /></button>
+                      <button className="btn small danger" title="Delete" onClick={() => remove(c.id)} style={{ marginLeft: 8 }}><TrashIcon style={{ width: 16, height: 16 }} /></button>
                     </div>
                   </td>
                 </tr>
               ))}
               {filtered().length === 0 && (
-                <tr><td colSpan={7}>No customers found</td></tr>
+                <tr><td colSpan={8}>No customers found</td></tr>
               )}
             </tbody>
           </table>
@@ -191,22 +260,37 @@ export default function Customers() {
       {showCreate && (
         <div className="modal-overlay">
           <div className="modal">
-            <h3>Create customer</h3>
+            <h3>{editId ? 'Edit customer' : 'Create customer'}</h3>
             <div className="field">
               <label className="field-label">Name</label>
               <input placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
             </div>
             <div className="field">
               <label className="field-label">Phone</label>
-              <input placeholder="Phone" value={phone} onChange={e => setPhone(e.target.value)} />
+              <input placeholder="Phone" value={phone} onChange={e => { setPhone(e.target.value); if (phoneError) setPhoneError('') }} />
+              {phoneError && <div className="error">{phoneError}</div>}
             </div>
             <div className="field">
               <label className="field-label">Email</label>
-              <input placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
+              <input placeholder="Email" value={email} onChange={e => { setEmail(e.target.value); if (emailError) setEmailError('') }} />
+              {emailError && <div className="error">{emailError}</div>}
+            </div>
+            <div className="field">
+              <label className="field-label">Status</label>
+            <div>
+              <button
+                className={`toggle-btn ${disabledState ? 'off' : 'on'}`}
+                aria-pressed={!!disabledState}
+                disabled={loading}
+                onClick={() => setDisabledState(s => !s)}
+              >
+                {disabledState ? 'OFF' : 'ON'}
+              </button>
+            </div>
             </div>
             <div className="modal-actions">
-              <button className="btn" onClick={create} disabled={loading}>{loading ? 'Saving...' : 'Create'}</button>
-              <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setName(''); setPhone(''); setEmail('') }}>Close</button>
+              <button className="btn" onClick={create} disabled={loading}>{loading ? 'Saving...' : (editId ? 'Save' : 'Create')}</button>
+              <button className="btn btn-ghost" onClick={() => { setShowCreate(false); setName(''); setPhone(''); setEmail(''); setEditId(null); setDisabledState(false) }}>Close</button>
             </div>
           </div>
         </div>

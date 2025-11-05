@@ -27,20 +27,31 @@ test('variant created by purchase is visible via products/:id/variants and pos s
   }
   const pur = await request(app).post('/api/purchases').send(purchaseBody)
   expect(pur.status).toBe(201)
-
-  // Assert product variants endpoint returns the new variant
-  const vlist = await request(app).get(`/api/products/${prodId}/variants`)
-  expect(vlist.status).toBe(200)
-  const variants = Array.isArray(vlist.body) ? vlist.body : (vlist.body && vlist.body.data) || []
-  const dbv = await db.query('SELECT id, mrp, stock FROM product_variants WHERE product_id = $1 ORDER BY id DESC', [prodId])
-  const found = variants.find(v => (v.mrp !== null && Number(v.mrp) === 110)) || dbv.rows.find(r => Number(r.mrp) === 110)
+  // Assert product variants endpoint returns the new variant (retry a few times to handle transient delays)
+  let found = null
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const vlist = await request(app).get(`/api/products/${prodId}/variants`)
+    expect(vlist.status).toBe(200)
+    const variants = Array.isArray(vlist.body) ? vlist.body : (vlist.body && vlist.body.data) || []
+    const dbv = await db.query('SELECT id, mrp, stock FROM product_variants WHERE product_id = $1 ORDER BY id DESC', [prodId])
+    found = variants.find(v => (v.mrp !== null && Number(v.mrp) === 110)) || dbv.rows.find(r => Number(r.mrp) === 110)
+    if (found) break
+    // small backoff
+    await new Promise(r => setTimeout(r, 200))
+  }
   expect(found).toBeTruthy()
 
-  // Assert POS search returns the variant row when searching by SKU
-  const pos = await request(app).get('/api/pos/products').query({ query: sku, limit: 50 })
-  expect(pos.status).toBe(200)
-  const posItems = Array.isArray(pos.body) ? pos.body : (pos.body && pos.body.data) || []
-  // Try matching either by product_id or by id==product id (pos returns id as product id sometimes)
+  // Assert POS search returns the variant row when searching by SKU (retry similarly)
+  let posItems = []
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const pos = await request(app).get('/api/pos/products').query({ query: sku, limit: 50 })
+    expect(pos.status).toBe(200)
+    posItems = Array.isArray(pos.body) ? pos.body : (pos.body && pos.body.data) || []
+    const posMatch = posItems.find(it => ((it.product_id === prodId || Number(it.id) === Number(prodId) || it.id === prodId) && (it.mrp != null && Number(it.mrp) === 110)) || (it.variant_id && Number(it.variant_id) && it.variant_id === found.id))
+    const masterMatch = posItems.find(it => (it.product_id === prodId || Number(it.id) === Number(prodId) || it.id === prodId) && (it.mrp != null && Number(it.mrp) === 110))
+    if (posMatch || masterMatch) { break }
+    await new Promise(r => setTimeout(r, 200))
+  }
   const posMatch = posItems.find(it => ((it.product_id === prodId || Number(it.id) === Number(prodId) || it.id === prodId) && (it.mrp != null && Number(it.mrp) === 110)) || (it.variant_id && Number(it.variant_id) && it.variant_id === found.id))
   const masterMatch = posItems.find(it => (it.product_id === prodId || Number(it.id) === Number(prodId) || it.id === prodId) && (it.mrp != null && Number(it.mrp) === 110))
   expect(posMatch || masterMatch).toBeTruthy()

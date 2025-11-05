@@ -7,6 +7,7 @@ export default function Purchases() {
   const [list, setList] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [total, setTotal] = useState(0)
   const [entries, setEntries] = useState(10)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
@@ -20,13 +21,29 @@ export default function Purchases() {
   const [items, setItems] = useState([]) // line items for modal
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { fetchList() }, [])
+  useEffect(() => { fetchList() }, [page, entries, search])
   useEffect(() => { if (newPurchaseOpen) fetchSuppliers() }, [newPurchaseOpen])
   async function fetchList() {
     setLoading(true); setError(null)
     try {
-      const r = await api.get('/purchases')
-      setList(r.data || [])
+      const params = { page, limit: entries }
+      if (search) params.q = search
+      const r = await api.get('/purchases', { params })
+      if (r && r.data) {
+        if (Array.isArray(r.data)) {
+          setList(r.data)
+          setTotal(r.data.length)
+        } else if (Array.isArray(r.data.data)) {
+          setList(r.data.data)
+          setTotal(r.data.total || 0)
+        } else {
+          setList(r.data || [])
+          setTotal((r.data && r.data.length) || 0)
+        }
+      } else {
+        setList([])
+        setTotal(0)
+      }
     } catch (e) { console.error(e); setError('Failed to load purchases') } finally { setLoading(false) }
   }
 
@@ -91,16 +108,14 @@ export default function Purchases() {
     } catch (e) { console.error(e); ui.showAlert('Failed to create supplier: ' + (e.message || '')) }
   }
 
-  const filteredAll = (list || []).filter(p => {
+  // list is a page returned by the server. Apply client-side search within page as fallback.
+  const filtered = (list || []).filter(p => {
     const q = (search || '').trim().toLowerCase()
     if (!q) return true
     const no = (p.metadata && (p.metadata.purchase_no || p.purchase_no)) || p.id
     const desc = (p.metadata && p.metadata.description) || ''
     return String(no).toLowerCase().includes(q) || (p.supplier_name || '').toLowerCase().includes(q) || (desc || '').toLowerCase().includes(q)
   })
-
-  const start = ((page || 1) - 1) * (entries || 10)
-  const filtered = filteredAll.slice(start, start + (entries || 10))
 
   return (
     <div className="page purchases-page">
@@ -175,9 +190,9 @@ export default function Purchases() {
           </table>
         </div>
       </div>
-      <div style={{ padding: '8px 16px' }}>
-        <PaginationFooter total={list.length} page={page} pageSize={entries} onPageChange={p => setPage(p)} onPageSizeChange={s => { setEntries(s); setPage(1) }} />
-      </div>
+        <div style={{ padding: '8px 16px' }}>
+          <PaginationFooter total={total} page={page} pageSize={entries} onPageChange={p => setPage(p)} onPageSizeChange={s => { setEntries(s); setPage(1) }} />
+        </div>
 
       {/* New Purchase Modal (standardized layout) */}
       {newPurchaseOpen && (

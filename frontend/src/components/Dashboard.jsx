@@ -10,6 +10,12 @@ export default function Dashboard() {
   const [recentPurchases, setRecentPurchases] = useState([])
   const [lowStockCount, setLowStockCount] = useState(0)
   const [lowStockList, setLowStockList] = useState([])
+  const [showLowStockModal, setShowLowStockModal] = useState(false)
+  const [modalLowStockItems, setModalLowStockItems] = useState([])
+  const [modalLoading, setModalLoading] = useState(false)
+  const [showTopProductsModal, setShowTopProductsModal] = useState(false)
+  const [modalTopProductsItems, setModalTopProductsItems] = useState([])
+  const [modalTopLoading, setModalTopLoading] = useState(false)
   const [topProducts, setTopProducts] = useState([])
 
   const [loading, setLoading] = useState(false)
@@ -73,6 +79,37 @@ export default function Dashboard() {
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [fetchAll])
+
+  async function openLowStockModal() {
+    setShowLowStockModal(true)
+    // if already loaded, don't re-fetch
+    if (modalLowStockItems && modalLowStockItems.length > 0) return
+    setModalLoading(true)
+    try {
+      const res = await api.get('/products?filter=low_stock&limit=1000').catch(() => null)
+      const rows = (res && (res.data && (res.data.data || res.data)) ) || []
+      // sort ascending by stock quantity (treat missing/null as 0)
+      rows.sort((a, b) => (Number(a.stock) || 0) - (Number(b.stock) || 0))
+      setModalLowStockItems(rows)
+    } finally {
+      setModalLoading(false)
+    }
+  }
+
+  async function openTopProductsModal() {
+    setShowTopProductsModal(true)
+    if (modalTopProductsItems && modalTopProductsItems.length > 0) return
+    setModalTopLoading(true)
+    try {
+      const res = await api.get('/products/top?limit=100').catch(() => null)
+      const rows = (res && (res.data && (res.data.data || res.data)) ) || []
+      // sort descending by revenue
+      rows.sort((a, b) => (Number(b.revenue) || 0) - (Number(a.revenue) || 0))
+      setModalTopProductsItems(rows)
+    } finally {
+      setModalTopLoading(false)
+    }
+  }
 
   const totalSales = adminStats?.totalSales || sales.reduce((s, x) => s + (Number(x.grand_total) || 0), 0)
   const transactions = adminStats?.transactions || sales.length
@@ -161,7 +198,7 @@ export default function Dashboard() {
           <div className="tile small">
             <div className="tile-label">Low stock</div>
             <div className="tile-value small-val">{lowStockCount}</div>
-            <div className="tile-sub"><a href="#" onClick={(e) => { e.preventDefault(); window.__appNavigate('/products?filter=low_stock') }}>View products</a></div>
+            <div className="tile-sub"><a href="#" onClick={async (e) => { e.preventDefault(); await openLowStockModal(); }}>View products</a></div>
           </div>
         </div>
       </div>
@@ -246,7 +283,7 @@ export default function Dashboard() {
               ))}
             </div>
             <div style={{ padding: '8px 12px', borderTop: '1px solid var(--color-surface-3)', textAlign: 'right' }}>
-              <a href="#" onClick={(e) => { e.preventDefault(); window.__appNavigate('/products?filter=low_stock') }}>View all</a>
+              <a href="#" onClick={async (e) => { e.preventDefault(); await openLowStockModal(); }}>View all</a>
             </div>
           </div>
           <div className="accepted-card">
@@ -267,11 +304,94 @@ export default function Dashboard() {
               ))}
             </div>
             <div style={{ padding: '8px 12px', borderTop: '1px solid var(--color-surface-3)', textAlign: 'right' }}>
-              <a href="#" onClick={(e) => { e.preventDefault(); window.__appNavigate('/products') }}>View products</a>
+              <a href="#" onClick={async (e) => { e.preventDefault(); await openTopProductsModal(); }}>View all</a>
+            </div>
+          </div>
+          
+        </div>
+      </div>
+      {showLowStockModal && (
+        <div className="modal-overlay">
+          <div className="modal large-modal" style={{ maxWidth: 760 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h3>Low stock items <span className="muted" style={{ fontSize: 14, marginLeft: 8 }}>{modalLowStockItems.length}</span></h3>
+              <div>
+                <button className="icon-btn" onClick={() => { setShowLowStockModal(false) }} title="Close">×</button>
+              </div>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              {modalLoading && <div className="muted">Loading…</div>}
+              {!modalLoading && modalLowStockItems.length === 0 && <div className="muted">No low-stock products</div>}
+              {!modalLoading && modalLowStockItems.length > 0 && (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: 'left' }}>Product</th>
+                      <th style={{ textAlign: 'left' }}>Barcode</th>
+                      <th style={{ textAlign: 'right' }}>MRP</th>
+                      <th style={{ textAlign: 'right' }}>Stock</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modalLowStockItems.map((p, idx) => (
+                      <tr key={p.id || idx}>
+                        <td style={{ padding: '8px 12px' }}>{p.name || 'Product'}</td>
+                        <td style={{ padding: '8px 12px' }}>{p.barcode || p.sku || ''}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{p.mrp != null ? Number(p.mrp).toFixed(2) : (p.price != null ? Number(p.price).toFixed(2) : '')}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{p.stock != null ? p.stock : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="modal-actions" style={{ marginTop: 12 }}>
+              <button className="btn" onClick={() => setShowLowStockModal(false)}>Close</button>
             </div>
           </div>
         </div>
-      </div>
+      )}
+      {showTopProductsModal && (
+        <div className="modal-overlay">
+          <div className="modal large-modal" style={{ maxWidth: 760 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <h3>Top products by revenue <span className="muted" style={{ fontSize: 14, marginLeft: 8 }}>{modalTopProductsItems.length}</span></h3>
+              <div>
+                <button className="icon-btn" onClick={() => { setShowTopProductsModal(false) }} title="Close">×</button>
+              </div>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              {modalTopLoading && <div className="muted">Loading…</div>}
+              {!modalTopLoading && modalTopProductsItems.length === 0 && <div className="muted">No data</div>}
+              {!modalTopLoading && modalTopProductsItems.length > 0 && (
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: 'left' }}>Product</th>
+                      <th style={{ textAlign: 'left' }}>SKU</th>
+                      <th style={{ textAlign: 'right' }}>Revenue</th>
+                      <th style={{ textAlign: 'right' }}>Qty sold</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {modalTopProductsItems.map((p, idx) => (
+                      <tr key={p.product_id || p.id || idx}>
+                        <td style={{ padding: '8px 12px' }}>{p.name || p.sku || 'Product'}</td>
+                        <td style={{ padding: '8px 12px' }}>{p.sku || (p.product_id || '')}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>₹ {Number(p.revenue || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td style={{ padding: '8px 12px', textAlign: 'right' }}>{p.total_qty || p.qty || 0}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div className="modal-actions" style={{ marginTop: 12 }}>
+              <button className="btn" onClick={() => setShowTopProductsModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

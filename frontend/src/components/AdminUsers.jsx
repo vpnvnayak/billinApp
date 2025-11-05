@@ -12,15 +12,32 @@ export default function AdminUsers({ user }) {
   const [entries, setEntries] = useState(10)
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
+  const [total, setTotal] = useState(0)
 
-  useEffect(() => { fetchUsers() }, [])
+  useEffect(() => { fetchUsers() }, [page, entries])
   useEffect(() => {
     // fetch available roles for the dropdown
     api.get('/roles').then(r => setRolesList(r.data)).catch(() => setRolesList([]))
   }, [])
 
-  function fetchUsers() {
-    api.get('/users').then(r => setUsers(r.data)).catch(console.error)
+  async function fetchUsers() {
+    try {
+      const r = await api.get('/users', { params: { page, limit: entries } })
+      if (r && r.data) {
+        if (Array.isArray(r.data)) {
+          setUsers(r.data)
+          setTotal(r.data.length)
+        } else if (Array.isArray(r.data.data)) {
+          setUsers(r.data.data)
+          setTotal(r.data.total || 0)
+        } else {
+          setUsers(r.data)
+          setTotal((r.data && r.data.length) || 0)
+        }
+      }
+    } catch (e) {
+      console.error(e)
+    }
   }
 
   // role add/remove moved into modal; inline add removed
@@ -78,12 +95,12 @@ export default function AdminUsers({ user }) {
 
   // role remove moved into modal; inline remove removed
 
+  // users is the server returned (paged) list. Apply client-side search only as a defensive fallback.
   const filtered = (() => {
     const q = (search || '').trim().toLowerCase()
-    let res = users
-    if (q) res = users.filter(u => (u.full_name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q))
-    const start = ((page || 1) - 1) * (entries || 10)
-    return res.slice(start, start + (entries || 10))
+    let res = users || []
+    if (q) res = res.filter(u => (u.full_name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q))
+    return res
   })()
 
   return (
@@ -97,7 +114,7 @@ export default function AdminUsers({ user }) {
         </div>
       </div>
       <div className="users-table-wrap">
-        <table className="users-table">
+  <table className="users-table">
           <thead>
             <tr>
               <th>SI No</th>
@@ -110,7 +127,7 @@ export default function AdminUsers({ user }) {
           <tbody>
       {filtered.map((u, idx) => (
               <tr key={u.id}>
-        <td>{idx + 1}</td>
+        <td>{((page || 1) - 1) * (entries || 10) + idx + 1}</td>
                 <td>{u.full_name || u.email}</td>
                 <td>{u.email}</td>
                 <td>
@@ -136,7 +153,7 @@ export default function AdminUsers({ user }) {
             ))}
           </tbody>
         </table>
-        <PaginationFooter total={users.length} page={page} pageSize={entries} onPageChange={p => setPage(p)} onPageSizeChange={s => { setEntries(s); setPage(1) }} />
+  <PaginationFooter total={total} page={page} pageSize={entries} onPageChange={p => setPage(p)} onPageSizeChange={s => { setEntries(s); setPage(1) }} />
       </div>
       {showModal ? (
         <div className="modal-overlay">
