@@ -1,3 +1,11 @@
+## Ignore uploaded files (logos, user uploads)
+/backend/public/uploads/
+
+# Node modules
+node_modules/
+
+# Vite build
+/frontend/dist/
 node_modules
 **/node_modules
 *.env
