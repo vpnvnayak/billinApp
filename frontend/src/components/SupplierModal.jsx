@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import api from '../services/api'
 import * as ui from '../services/ui'
+import { isValidEmail, isValidPhone } from '../utils/validation'
 
 export default function SupplierModal({ show, supplier, onClose, onSaved }) {
   const [name, setName] = useState('')
@@ -40,6 +41,17 @@ export default function SupplierModal({ show, supplier, onClose, onSaved }) {
   async function save() {
     try {
       setLoading(true)
+      // basic validation for phone/email
+      if (phone && !isValidPhone(phone)) {
+        ui.showAlert('Invalid phone number')
+        setLoading(false)
+        return
+      }
+      if (email && !isValidEmail(email)) {
+        ui.showAlert('Invalid email address')
+        setLoading(false)
+        return
+      }
       const payload = {
         name: name.trim() || null,
         phone: phone.trim() || null,

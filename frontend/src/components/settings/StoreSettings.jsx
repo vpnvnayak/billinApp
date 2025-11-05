@@ -107,36 +107,64 @@ export default function StoreSettings() {
   async function handleSave() {
     setSaving(true)
     try {
-      // try upload if a file selected
+      // try upload if a file selected (upload failure is non-fatal)
       let logoUrl = null
       const file = fileRef.current && fileRef.current.files && fileRef.current.files[0]
       if (file) {
-        const fd = new FormData()
-        fd.append('file', file)
-        const up = await api.post('/uploads/logo', fd, { headers: { 'Content-Type': 'multipart/form-data' } }).catch(() => null)
-        if (up && up.data && up.data.url) logoUrl = up.data.url
+        try {
+          const fd = new FormData()
+          fd.append('file', file)
+          const up = await api.post('/uploads/logo', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+          if (up && up.data && up.data.url) logoUrl = up.data.url
+        } catch (uerr) {
+          // Log and continue without logo (upload failed)
+          console.warn('Logo upload failed, continuing without logo', uerr)
+        }
       }
 
       const payload = { ...form }
       if (logoUrl) payload.logo_url = logoUrl
 
-      const r = await api.post('/settings', payload).catch(() => null)
-      if (r && r.data) {
-        // update UI with server's merged settings
-        setForm(f => ({ ...f, ...r.data }))
-        if (r.data.logo_url) {
-          const backendOrigin = (api.defaults && api.defaults.baseURL) ? api.defaults.baseURL.replace(/\/api\/?$/,'') : `${window.location.protocol}//${window.location.hostname}:4000`
-          const normalized = r.data.logo_url.startsWith('/api/') ? r.data.logo_url.replace(/^\/api/, '') : r.data.logo_url
-          const full = normalized.startsWith('http') ? normalized : (backendOrigin + normalized)
-          setLogoPreview(full)
+  // Call settings endpoint and allow errors to propagate to outer catch so we can show meaningful failures.
+  const r = await api.post('/settings', payload)
+  // Accept any successful HTTP 2xx as success. Some backends may return 204 No Content
+  if (r && r.status && r.status >= 200 && r.status < 300) {
+        // update UI with server's merged settings if provided
+        if (r.data) {
+          // Only merge known, allowed setting keys to avoid propagating server-only/internal keys like `_store_id`.
+          const s = r.data
+          setForm(f => ({
+            ...f,
+            name: s.name || f.name,
+            address: s.address || f.address,
+            contact: s.contact || f.contact,
+            website: s.website || f.website,
+            tax_rate: s.tax_rate || f.tax_rate,
+            timezone: s.timezone || f.timezone,
+            gst_id: s.gst_id || f.gst_id,
+            bank_name: s.bank_name || f.bank_name,
+            bank_branch: s.bank_branch || f.bank_branch,
+            account_no: s.account_no || f.account_no,
+            ifsc: s.ifsc || f.ifsc,
+            account_name: s.account_name || f.account_name
+          }))
+          if (s.logo_url) {
+            const backendOrigin = (api.defaults && api.defaults.baseURL) ? api.defaults.baseURL.replace(/\/api\/?$/,'') : `${window.location.protocol}//${window.location.hostname}:4000`
+            const normalized = s.logo_url.startsWith('/api/') ? s.logo_url.replace(/^\/api/, '') : s.logo_url
+            const full = normalized.startsWith('http') ? normalized : (backendOrigin + normalized)
+            setLogoPreview(full)
+          }
         }
         ui.showSnackbar('Settings saved', 'success')
-      } else {
-        ui.showAlert('Saved locally (backend endpoint may be missing).')
       }
     } catch (err) {
       console.error('save settings failed', err)
-      ui.showAlert('Failed to save settings')
+      // Prefer server-provided error message when available
+      const serverMsg = err && err.response && (err.response.data && (err.response.data.error || err.response.data.message))
+      const status = err && err.response && err.response.status
+      if (serverMsg) ui.showAlert(`Failed to save settings: ${serverMsg}`)
+      else if (status) ui.showAlert(`Failed to save settings (status ${status})`)
+      else ui.showAlert('Failed to save settings')
     } finally { setSaving(false) }
   }
 

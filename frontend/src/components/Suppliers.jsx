@@ -3,6 +3,7 @@ import api from '../services/api'
 import ListControls from './ui/ListControls'
 import PaginationFooter from './ui/PaginationFooter'
 import SupplierModal from './SupplierModal'
+import { isValidEmail, isValidPhone } from '../utils/validation'
 
 export default function Suppliers() {
   const [list, setList] = useState([])
@@ -60,6 +61,17 @@ export default function Suppliers() {
   async function create() {
     try {
       setLoading(true)
+      // validate phone/email
+      if (phone && !isValidPhone(phone)) {
+        import('../services/ui').then(m => m.showAlert('Invalid phone'))
+        setLoading(false)
+        return
+      }
+      if (email && !isValidEmail(email)) {
+        import('../services/ui').then(m => m.showAlert('Invalid email'))
+        setLoading(false)
+        return
+      }
       const payload = {
         name: name.trim() || null,
         phone: phone.trim() || null,

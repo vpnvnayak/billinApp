@@ -4,6 +4,7 @@ import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
 import ListControls from './ui/ListControls'
 import PaginationFooter from './ui/PaginationFooter'
 import { useUI } from './ui/UIProvider'
+import { isValidEmail, isValidPhone } from '../utils/validation'
 
 export default function Customers() {
   const [list, setList] = useState([])
@@ -90,18 +91,6 @@ export default function Customers() {
     // validate phone (optional) and email (optional)
     setPhoneError('')
     setEmailError('')
-    const isValidEmail = (v) => {
-      if (!v) return true
-      // basic RFC-5322-ish simple regex for common emails
-      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)
-    }
-    const isValidPhone = (v) => {
-      if (!v) return true
-      // allow digits, spaces, +, -, parentheses; require 7-15 digits total
-      const digits = (v.match(/\d/g) || []).length
-      if (digits < 7 || digits > 15) return false
-      return /^[0-9+()\-\s]+$/.test(v)
-    }
     if (email && !isValidEmail(email.trim())) {
       setEmailError('Invalid email format')
       return

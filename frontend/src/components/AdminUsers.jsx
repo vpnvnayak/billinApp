@@ -3,6 +3,7 @@ import api from '../services/api'
 import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
 import ListControls from './ui/ListControls'
 import PaginationFooter from './ui/PaginationFooter'
+import { isValidEmail, isValidPhone } from '../utils/validation'
 
 export default function AdminUsers({ user }) {
   const [users, setUsers] = useState([])
@@ -46,6 +47,8 @@ export default function AdminUsers({ user }) {
     e && e.preventDefault()
   const { id, username, email, phone, password, confirm, roles } = newUser || {}
   if (!username || !email) return import('../services/ui').then(m => m.showAlert('username and email required'))
+  if (!isValidEmail(email)) return import('../services/ui').then(m => m.showAlert('Invalid email'))
+  if (phone && !isValidPhone(phone)) return import('../services/ui').then(m => m.showAlert('Invalid phone'))
   if (!roles || !roles.length) return import('../services/ui').then(m => m.showAlert('select at least one role'))
   // client-side guard: only superadmin or storeadmin may assign storeadmin
   const isSuper = user && Array.isArray(user.roles) && user.roles.includes('superadmin')

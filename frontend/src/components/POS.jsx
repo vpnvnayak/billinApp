@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import api from '../services/api'
 import { printThermal } from '../services/print'
+import { isValidEmail, isValidPhone } from '../utils/validation'
 
 export default function POS() {
   // helper to format numbers as Indian rupees
@@ -339,6 +340,19 @@ export default function POS() {
     const ph = (phone !== undefined) ? phone : newCustomerPhone
     const em = (email !== undefined) ? email : newCustomerEmail
     if (!nm || !nm.trim()) return
+    // validate required phone and optional email
+    if (!ph || !String(ph).trim()) {
+      import('../services/ui').then(m => m.showAlert('Phone is required'))
+      return
+    }
+    if (!isValidPhone(ph)) {
+      import('../services/ui').then(m => m.showAlert('Invalid phone number'))
+      return
+    }
+    if (em && !isValidEmail(em)) {
+      import('../services/ui').then(m => m.showAlert('Invalid email address'))
+      return
+    }
     try {
       const r = await api.post('/customers', { name: nm.trim(), phone: ph || null, email: em || null })
       // ensure list updated and select newly created

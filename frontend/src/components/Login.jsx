@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import api from '../services/api'
 import { setToken } from '../services/localStore'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
+import { isValidEmail } from '../utils/validation'
 
 export default function Login({ onLogin }) {
   const [email, setEmail] = useState('')
@@ -13,6 +14,10 @@ export default function Login({ onLogin }) {
   async function submit(e) {
     e.preventDefault()
     setError(null)
+    if (!isValidEmail(email)) {
+      setError('Invalid email')
+      return
+    }
     try {
       const res = await api.post('/auth/login', { email, password })
       const { token, user } = res.data
