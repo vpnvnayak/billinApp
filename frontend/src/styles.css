@@ -672,6 +672,89 @@ input:focus, select:focus, textarea:focus { box-shadow: var(--focus-ring); borde
 .tab-button.active { background: var(--color-surface); border-color: var(--color-primary-600); color: var(--color-primary-700); box-shadow: 0 8px 24px rgba(136,92,247,0.06) }
 .reports-content .card { padding: 16px }
 
+/* Theme: inventory/stock visuals (matches report screenshot) */
+.stock-report-page .card-header { display: flex; justify-content: space-between; align-items: center; gap: 12px }
+.stock-report-page .kpi-card { border-radius: 6px; box-shadow: 0 8px 26px rgba(15,23,42,0.06); display:flex; flex-direction:column; align-items:center; justify-content:center }
+.stock-report-page .kpi-card div:first-child { font-size: 12px; opacity: 0.9; font-weight:700 }
+.stock-report-page .kpi-card div:last-child { font-size: 22px; font-weight:900 }
+
+/* Table: use project theme surfaces and subtle zebra striping instead of a red highlighter */
+.stock-report-page .products-table thead th { background: transparent; color: var(--color-muted); font-weight: 700 }
+.stock-report-page .products-table tbody tr { background: var(--color-surface); color: var(--color-text) }
+.stock-report-page .products-table tbody tr:nth-child(even) { background: var(--color-surface-2) }
+.stock-report-page .products-table tbody tr td { border-color: var(--color-border) }
+
+/* Make header KPI boxes stand out and align to the right; use theme colors */
+.stock-report-page .stock-kpis { align-items: center }
+.stock-report-page .stock-kpis .kpi-card { padding: 14px 18px; border-radius: 6px; min-width: 140px }
+.stock-report-page .stock-kpis .kpi-card:nth-child(1) { background: var(--color-warning); color: #fff }
+.stock-report-page .stock-kpis .kpi-card:nth-child(2) { background: var(--color-danger); color: #fff }
+.stock-report-page .stock-kpis .kpi-card:nth-child(3) { background: var(--color-primary-600); color: #fff }
+
+/* Header responsive layout for stock report: keep entries/search left and actions right */
+.stock-report-page .card-header { align-items: flex-start }
+.stock-report-page .card-header .header-right { display:flex; gap:12px; flex-direction:column; align-items:flex-end; min-width: 0; }
+.stock-report-page .card-header .header-right .stock-kpis { display:flex; gap:12px; flex-wrap:wrap }
+.stock-report-page .card-header .header-right .controls-row { display:flex; gap:12px; justify-content:space-between; align-items:center; width:100%; flex-wrap:wrap }
+.stock-report-page .card-header .header-right .controls-left { display:flex; gap:12px; align-items:center; min-width:0; flex:1 1 auto }
+.stock-report-page .card-header .header-right .controls-right { display:flex; gap:8px; align-items:center; flex-shrink:0 }
+
+@media (max-width: 900px) {
+	.stock-report-page .card-header { align-items: flex-start }
+	.stock-report-page .card-header .header-right { align-items: flex-start }
+	.stock-report-page .card-header .header-right .controls-row { justify-content:flex-start }
+}
+
+/* Pagination and action controls styled to match project theme */
+.stock-report-page .pagination { display:flex; gap:8px; align-items:center }
+.stock-report-page .pagination .btn { background: var(--color-primary-600); color: white; border-radius: 6px; padding: 8px 10px }
+.stock-report-page .pagination .btn.small { background: var(--color-primary); color: #fff }
+.stock-report-page .pagination .btn.small.active { background: var(--color-primary-700); color: #fff }
+
+/* Ensure search and select controls fit the card style */
+.stock-report-page input[type="text"], .stock-report-page input[type="search"], .stock-report-page select {
+	padding: 8px 10px; border-radius: 6px; border: 1px solid var(--color-border); background: #fff; height: 36px
+}
+
+/* Layout tweaks: wider Item Name column and horizontal scrolling for stock table */
+.stock-report-page .table-wrap { overflow-x: auto; }
+.stock-report-page .products-table { min-width: 1400px; width: 100%; table-layout: auto; }
+/* Make Item Name column wider (2nd column) and allow wrapping for long names. Use top alignment so multi-line names look correct. */
+.stock-report-page .products-table th:nth-child(2),
+.stock-report-page .products-table td:nth-child(2) {
+	min-width: 280px;
+	max-width: none;
+	white-space: normal;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	vertical-align: top;
+}
+
+/* General alignment & sizing tweaks for clarity */
+.stock-report-page .products-table th, .stock-report-page .products-table td { vertical-align: middle; padding: 14px 12px }
+.stock-report-page .products-table thead th { text-align: left }
+
+/* Column-specific alignment */
+.stock-report-page .products-table th:nth-child(1), .stock-report-page .products-table td:nth-child(1) { text-align: center; width: 48px }
+.stock-report-page .products-table th:nth-child(3), .stock-report-page .products-table td:nth-child(3) { text-align: left; width: 120px }
+.stock-report-page .products-table th:nth-child(4), .stock-report-page .products-table td:nth-child(4) { text-align: left; width: 110px }
+.stock-report-page .products-table th:nth-child(5), .stock-report-page .products-table td:nth-child(5) { text-align: right; width: 90px }
+.stock-report-page .products-table th:nth-child(6), .stock-report-page .products-table td:nth-child(6) { text-align: right; width: 120px }
+.stock-report-page .products-table th:nth-child(7), .stock-report-page .products-table td:nth-child(7) { text-align: right; width: 120px }
+.stock-report-page .products-table th:nth-child(8), .stock-report-page .products-table td:nth-child(8) { text-align: center; width: 80px }
+.stock-report-page .products-table th:nth-child(9), .stock-report-page .products-table td:nth-child(9) { text-align: right; width: 120px }
+.stock-report-page .products-table th:nth-child(10), .stock-report-page .products-table td:nth-child(10) { text-align: right; width: 80px }
+.stock-report-page .products-table th:nth-child(11), .stock-report-page .products-table td:nth-child(11) { text-align: center; width: 80px }
+.stock-report-page .products-table th:nth-child(12), .stock-report-page .products-table td:nth-child(12) { text-align: right; width: 140px }
+/* Slightly tighten some numeric columns so name can breathe */
+.stock-report-page .products-table th:nth-child(1), .stock-report-page .products-table td:nth-child(1) { width: 48px; }
+.stock-report-page .products-table th:nth-child(3), .stock-report-page .products-table td:nth-child(3) { width: 120px; }
+.stock-report-page .products-table th:nth-child(4), .stock-report-page .products-table td:nth-child(4) { width: 110px; }
+.stock-report-page .products-table th:nth-child(5), .stock-report-page .products-table td:nth-child(5) { width: 90px; }
+.stock-report-page .products-table th:nth-child(12), .stock-report-page .products-table td:nth-child(12) { width: 140px; }
+
+
+
 
 /* Ensure page header search inputs align with products header search styling */
 .page-header .search { display:flex; gap:8px; align-items:center; padding:8px 10px; border:1px solid var(--color-border); border-radius:8px; background: #fff }

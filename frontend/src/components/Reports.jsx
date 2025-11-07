@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import StockReport from './reports/StockReport'
 
 const REPORTS = [
   { id: 'sales', title: 'Sales', description: 'Daily / weekly sales summary. Click to view details.', to: '/sales' },
@@ -31,13 +32,19 @@ export default function Reports() {
 
         <div className="reports-content" style={{ marginTop: 12 }}>
           {REPORTS.map(r => (
-            <div key={r.id} style={{ display: active === r.id ? 'block' : 'none' }} className="card">
-              <h3>{r.title} Report</h3>
-              <p className="muted">{r.description}</p>
-              <div style={{ textAlign: 'right' }}>
-                <a href="#" onClick={(e) => { e.preventDefault(); if (window.__appNavigate) window.__appNavigate(r.to) }}>Open</a>
+            r.id === 'inventory' ? (
+              <div key={r.id} style={{ display: active === r.id ? 'block' : 'none' }}>
+                <StockReport />
               </div>
-            </div>
+            ) : (
+              <div key={r.id} style={{ display: active === r.id ? 'block' : 'none' }} className="card">
+                <h3>{r.title} Report</h3>
+                <p className="muted">{r.description}</p>
+                <div style={{ textAlign: 'right' }}>
+                  <a href="#" onClick={(e) => { e.preventDefault(); if (window.__appNavigate) window.__appNavigate(r.to) }}>Open</a>
+                </div>
+              </div>
+            )
           ))}
         </div>
       </div>
