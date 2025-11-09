@@ -101,9 +101,10 @@ export default function PurchaseDetail({ id }) {
 
   // Use tax_pct as the GST percentage. Do not double by adding sales_tax_pct.
   const taxPct = (Number(newItem.tax_pct) || 0) + (Number(newItem.cess_pct) || 0)
-      const taxAmount = (gross * taxPct) / 100
-      const costLine = gross + taxAmount - discountAmount
-      const costPerUnit = qty > 0 ? Number((costLine / qty).toFixed(2)) : Number(unit.toFixed(2))
+  const afterDiscount = gross - discountAmount
+  const taxAmount = (afterDiscount * taxPct) / 100
+  const costLine = afterDiscount + taxAmount
+  const costPerUnit = qty > 0 ? Number((costLine / qty).toFixed(2)) : Number(unit.toFixed(2))
 
       const mrp = Number(newItem.mrp) || 0
       const retail = Number(newItem.retail_price) || 0
@@ -510,8 +511,9 @@ export default function PurchaseDetail({ id }) {
                           }
                           // sel.tax_percent is GST. Don't add sales_tax_pct separately (avoids doubling).
                           const tPct = (sel.tax_percent != null ? sel.tax_percent : (sel.taxPercent != null ? sel.taxPercent : (Number(n.tax_pct) || 0))) + (Number(n.cess_pct) || 0)
-                          const taxAmount = (grossLine * tPct) / 100
-                          const costLine = grossLine + taxAmount - discountAmount
+                          const afterDiscount = grossLine - discountAmount
+                          const taxAmount = (afterDiscount * tPct) / 100
+                          const costLine = afterDiscount + taxAmount
                           const costPerUnit = qty > 0 ? Number((costLine / qty).toFixed(2)) : Number(unit.toFixed(2))
 
                           const mrpVal = Number(sel.mrp || 0)
@@ -567,8 +569,9 @@ export default function PurchaseDetail({ id }) {
                           }
                           // p.tax_percent is GST. Do not add n.sales_tax_pct which would double-count.
                           const tPct = (p.tax_percent != null ? p.tax_percent : (p.taxPercent != null ? p.taxPercent : (Number(n.tax_pct) || 0))) + (Number(n.cess_pct) || 0)
-                          const taxAmount = (grossLine * tPct) / 100
-                          const costLine = grossLine + taxAmount - discountAmount
+                          const afterDiscount = grossLine - discountAmount
+                          const taxAmount = (afterDiscount * tPct) / 100
+                          const costLine = afterDiscount + taxAmount
                           const costPerUnit = qty > 0 ? Number((costLine / qty).toFixed(2)) : Number(unit.toFixed(2))
 
                           const mrpVal = Number(p.mrp || 0)

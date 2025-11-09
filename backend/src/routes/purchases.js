@@ -5,6 +5,47 @@ const v = require('../validators')
 const schemaCache = require('../schemaCache')
 const tx = require('../tx')
 
+// Factory that returns an insertItem helper bound to a transaction client.
+// This avoids duplicate definitions and scoping issues between create/update flows.
+function makeInsertItem(client) {
+  return async function insertItem({ purchaseId, productId=null, variantId=null, sku=null, name=null, qty=0, price=0, lineTotal=0, storeId=null, tax_percent=null, cess_pct=null, unit=null, gross_amount=null }) {
+    const hasTaxCol = schemaCache.hasColumn('purchase_items', 'tax_percent')
+    const hasCessCol = schemaCache.hasColumn('purchase_items', 'cess_pct')
+    const hasUnitCol = schemaCache.hasColumn('purchase_items', 'unit')
+    const hasGrossCol = schemaCache.hasColumn('purchase_items', 'gross_amount')
+    const hasTotalCol = schemaCache.hasColumn('purchase_items', 'total_amount')
+    const hasTaxAmountCol = schemaCache.hasColumn('purchase_items', 'tax_amount')
+    const hasAfterDiscountCol = schemaCache.hasColumn('purchase_items', 'after_discount')
+    const hasDiscountPctCol = schemaCache.hasColumn('purchase_items', 'discount_pct')
+    const hasDiscountRsCol = schemaCache.hasColumn('purchase_items', 'discount_rs')
+    const hasVariantCol = schemaCache.hasColumn('purchase_items', 'variant_id')
+
+    const cols = ['purchase_id', 'product_id']
+    const vals = ['$1', '$2']
+    const params = [purchaseId, productId]
+    let idx = params.length
+    if (hasVariantCol && variantId !== null) {
+      cols.push('variant_id'); idx++; vals.push(`$${idx}`); params.push(variantId)
+    }
+    cols.push('sku','name','qty','price','line_total')
+    idx += 5
+    vals.push(...[`$${idx-4}`,'$'+(idx-3),'$'+(idx-2),'$'+(idx-1),'$'+idx])
+    params.push(sku, name, qty, price, lineTotal)
+    if (hasTaxCol) { cols.push('tax_percent'); params.push(tax_percent == null ? 0 : tax_percent); vals.push(`$${++idx}`) }
+    if (hasCessCol) { cols.push('cess_pct'); params.push(cess_pct == null ? 0 : cess_pct); vals.push(`$${++idx}`) }
+    if (hasUnitCol) { cols.push('unit'); params.push(unit == null ? null : unit); vals.push(`$${++idx}`) }
+    if (hasGrossCol) { cols.push('gross_amount'); params.push(gross_amount == null ? null : gross_amount); vals.push(`$${++idx}`) }
+  if (hasAfterDiscountCol) { cols.push('after_discount'); params.push((arguments[0] && arguments[0].after_discount) == null ? null : arguments[0].after_discount); vals.push(`$${++idx}`) }
+  if (hasTaxAmountCol) { cols.push('tax_amount'); params.push((arguments[0] && arguments[0].tax_amount) == null ? null : arguments[0].tax_amount); vals.push(`$${++idx}`) }
+  if (hasTotalCol) { cols.push('total_amount'); params.push((arguments[0] && arguments[0].total_amount) == null ? null : arguments[0].total_amount); vals.push(`$${++idx}`) }
+  if (hasDiscountPctCol) { cols.push('discount_pct'); params.push((arguments[0] && arguments[0].discount_pct) == null ? null : arguments[0].discount_pct); vals.push(`$${++idx}`) }
+  if (hasDiscountRsCol) { cols.push('discount_rs'); params.push((arguments[0] && arguments[0].discount_rs) == null ? null : arguments[0].discount_rs); vals.push(`$${++idx}`) }
+    if (storeId !== null && schemaCache.hasColumn('purchase_items', 'store_id')) { cols.push('store_id'); params.push(storeId); vals.push(`$${++idx}`) }
+    const sql = `INSERT INTO purchase_items (${cols.join(', ')}) VALUES (${vals.join(', ')})`
+    await client.query(sql, params)
+  }
+}
+
 // GET /api/purchases - list purchases (basic)
 router.get('/', async (req, res) => {
   if (!process.env.DATABASE_URL) return res.json({ data: [], total: 0 })
@@ -49,15 +90,26 @@ router.get('/:id', async (req, res) => {
     }
     if (p.rows.length === 0) return res.status(404).json({ error: 'not found' })
     // Include product-level fields (mrp, price) so UI can prepopulate when editing line items
-    const items = await db.query(
-      `SELECT pi.id, pi.product_id, pi.variant_id, pi.sku, pi.name, pi.qty, pi.price, pi.line_total,
-              COALESCE(pv.mrp, p.mrp) AS mrp, COALESCE(pv.price, p.price) AS product_price
+    // Build SELECT with optional columns only if they exist in the DB schema
+    const extraSelect = []
+    if (schemaCache.hasColumn('purchase_items', 'after_discount')) extraSelect.push('pi.after_discount')
+    if (schemaCache.hasColumn('purchase_items', 'tax_amount')) extraSelect.push('pi.tax_amount')
+    if (schemaCache.hasColumn('purchase_items', 'total_amount')) extraSelect.push('pi.total_amount')
+    if (schemaCache.hasColumn('purchase_items', 'discount_pct')) extraSelect.push('pi.discount_pct')
+    if (schemaCache.hasColumn('purchase_items', 'discount_rs')) extraSelect.push('pi.discount_rs')
+
+    const selectSql = `SELECT pi.id, pi.product_id, pi.variant_id, pi.sku, pi.name, pi.qty, pi.price AS unit_price, pi.line_total, ${extraSelect.join(', ') || ''}
+              , COALESCE(pv.mrp, p.mrp) AS mrp, COALESCE(pv.price, p.price) AS product_price,
+              COALESCE(pi.tax_percent, pv.tax_percent, p.tax_percent, 0) AS tax_pct,
+              COALESCE(pi.cess_pct, 0) AS cess_pct,
+              COALESCE(pi.unit, COALESCE(pv.unit, p.unit)) AS unit,
+              COALESCE(pi.gross_amount, (COALESCE(pi.price, COALESCE(pv.price, p.price)) * COALESCE(pi.qty, 0))::numeric(14,2)) AS gross_amount
        FROM purchase_items pi
        LEFT JOIN products p ON pi.product_id = p.id
        LEFT JOIN product_variants pv ON pi.variant_id = pv.id
-       WHERE pi.purchase_id = $1`,
-      [id]
-    )
+       WHERE pi.purchase_id = $1`
+
+    const items = await db.query(selectSql, [id])
     // Map product_price to product_price and expose mrp directly; frontend's mapper will pick up `mrp`.
     res.json({ purchase: p.rows[0], items: items.rows })
   } catch (err) {
@@ -92,6 +144,8 @@ router.post('/', async (req, res) => {
 
       // Insert items within same transaction
       if (Array.isArray(items) && items.length > 0) {
+        // helper to insert a purchase_item row bound to this transaction client
+        const insertItem = makeInsertItem(client)
         // detect whether purchase_items has a store_id column
         const hasStoreCol = schemaCache.hasColumn('purchase_items', 'store_id')
         for (const it of items) {
@@ -118,7 +172,7 @@ router.post('/', async (req, res) => {
             let resolvedProductId = null
             async function createProductForPurchase() {
               const unitVal = it.unit || null
-              const taxPct = it.tax_percent != null ? Number(it.tax_percent) : 0
+                const taxPct = Number(it.tax_percent ?? it.tax_pct ?? 0)
               const res = await client.query(
                 'INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
                 [sku, name, priceVal, purchaseMrp, unitVal, taxPct, qty, storeId]
@@ -163,11 +217,7 @@ router.post('/', async (req, res) => {
 
             if (!resolvedProductId) resolvedProductId = await createProductForPurchase()
 
-            if (hasStoreCol) {
-              await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [created.id, resolvedProductId, sku, name, qty, priceVal, lineTotal, storeId])
-            } else {
-              await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total) VALUES ($1,$2,$3,$4,$5,$6,$7)', [created.id, resolvedProductId, sku, name, qty, priceVal, lineTotal])
-            }
+            await insertItem({ purchaseId: created.id, productId: resolvedProductId, sku, name, qty, price: priceVal, lineTotal, storeId, tax_percent: (it.tax_percent ?? it.tax_pct), cess_pct: it.cess_pct, unit: it.unit, gross_amount: it.gross_amount, after_discount: it.after_discount, tax_amount: it.tax_amount, total_amount: it.total_amount, discount_pct: it.discount_pct, discount_rs: it.discount_rs })
             continue
           }
 
@@ -187,7 +237,7 @@ router.post('/', async (req, res) => {
 
           // If no product master exists, create one (minimal fields)
           if (!productId) {
-            const resp = await client.query('INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id', [sku, name, priceVal, purchaseMrp, it.unit || null, it.tax_percent || 0, 0, storeId])
+            const resp = await client.query('INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id', [sku, name, priceVal, purchaseMrp, it.unit || null, (it.tax_percent ?? it.tax_pct ?? 0), 0, storeId])
             productId = resp.rows[0].id
           }
 
@@ -202,11 +252,7 @@ router.post('/', async (req, res) => {
                 // Update product master: increase stock and set mrp/price to purchase values
                 await client.query('UPDATE products SET stock = COALESCE(stock,0) + $1, mrp = $2, price = $3 WHERE id = $4', [qty, purchaseMrp, priceVal, productId])
                 // Insert purchase item without variant_id
-                if (hasStoreCol) {
-                  await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [created.id, productId, sku, name, qty, priceVal, lineTotal, storeId])
-                } else {
-                  await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total) VALUES ($1,$2,$3,$4,$5,$6,$7)', [created.id, productId, sku, name, qty, priceVal, lineTotal])
-                }
+                await insertItem({ purchaseId: created.id, productId, sku, name, qty, price: priceVal, lineTotal, storeId, tax_percent: (it.tax_percent ?? it.tax_pct), cess_pct: it.cess_pct, unit: it.unit, gross_amount: it.gross_amount, after_discount: it.after_discount, tax_amount: it.tax_amount, total_amount: it.total_amount, discount_pct: it.discount_pct, discount_rs: it.discount_rs })
                 continue
               }
             } catch (e) {
@@ -223,7 +269,7 @@ router.post('/', async (req, res) => {
           } else {
             // create variant
             const unitVal = it.unit || null
-            const taxPct = it.tax_percent != null ? Number(it.tax_percent) : 0
+            const taxPct = Number(it.tax_percent ?? it.tax_pct ?? 0)
             // Use upsert to avoid duplicate variants when concurrent requests try to create the same (product_id, mrp)
             // If product had stock recorded at the product level (pre-variants), move it into the new variant
             const prodStockRow = await client.query('SELECT stock FROM products WHERE id = $1 FOR UPDATE', [productId])
@@ -245,11 +291,7 @@ router.post('/', async (req, res) => {
           }
 
           // Insert purchase_item referencing productId and variantId (if available)
-          if (hasStoreCol) {
-            await client.query('INSERT INTO purchase_items (purchase_id, product_id, variant_id, sku, name, qty, price, line_total, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [created.id, productId, variantId, sku, name, qty, priceVal, lineTotal, storeId])
-          } else {
-            await client.query('INSERT INTO purchase_items (purchase_id, product_id, variant_id, sku, name, qty, price, line_total) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [created.id, productId, variantId, sku, name, qty, priceVal, lineTotal])
-          }
+            await insertItem({ purchaseId: created.id, productId, variantId, sku, name, qty, price: priceVal, lineTotal, storeId, tax_percent: (it.tax_percent ?? it.tax_pct), cess_pct: it.cess_pct, unit: it.unit, gross_amount: it.gross_amount, after_discount: it.after_discount, tax_amount: it.tax_amount, total_amount: it.total_amount, discount_pct: it.discount_pct, discount_rs: it.discount_rs })
         }
       }
       return { status: 201, json: created }
@@ -305,6 +347,8 @@ router.put('/:id', async (req, res) => {
 
       // Insert new items (variant-aware, same logic as create)
       if (Array.isArray(items) && items.length > 0) {
+        // helper to insert a purchase_item row bound to this transaction client
+        const insertItem = makeInsertItem(client)
         const hasStoreCol = schemaCache.hasColumn('purchase_items', 'store_id')
         for (const it of items) {
           const qty = Number(it.qty || 0)
@@ -330,7 +374,7 @@ router.put('/:id', async (req, res) => {
             let resolvedProductId = null
             async function createProductForPurchase() {
               const unitVal = it.unit || null
-              const taxPct = it.tax_percent != null ? Number(it.tax_percent) : 0
+              const taxPct = Number(it.tax_percent ?? it.tax_pct ?? 0)
               const res = await client.query(
                 'INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
                 [sku, name, priceVal, purchaseMrp, unitVal, taxPct, qty, storeId]
@@ -375,11 +419,7 @@ router.put('/:id', async (req, res) => {
 
             if (!resolvedProductId) resolvedProductId = await createProductForPurchase()
 
-            if (hasStoreCol) {
-              await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [id, resolvedProductId, sku, name, qty, priceVal, lineTotal, storeId])
-            } else {
-              await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total) VALUES ($1,$2,$3,$4,$5,$6,$7)', [id, resolvedProductId, sku, name, qty, priceVal, lineTotal])
-            }
+            await insertItem({ purchaseId: id, productId: resolvedProductId, sku, name, qty, price: priceVal, lineTotal, storeId, tax_percent: (it.tax_percent ?? it.tax_pct), cess_pct: it.cess_pct, unit: it.unit, gross_amount: it.gross_amount, after_discount: it.after_discount, tax_amount: it.tax_amount, total_amount: it.total_amount, discount_pct: it.discount_pct, discount_rs: it.discount_rs })
             continue
           }
 
@@ -399,7 +439,7 @@ router.put('/:id', async (req, res) => {
 
           // If no product master exists, create one (minimal fields)
           if (!productId) {
-            const resp = await client.query('INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id', [sku, name, priceVal, purchaseMrp, it.unit || null, it.tax_percent || 0, 0, storeId])
+            const resp = await client.query('INSERT INTO products (sku, name, price, mrp, unit, tax_percent, stock, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id', [sku, name, priceVal, purchaseMrp, it.unit || null, (it.tax_percent ?? it.tax_pct ?? 0), 0, storeId])
             productId = resp.rows[0].id
           }
 
@@ -414,11 +454,7 @@ router.put('/:id', async (req, res) => {
                 // Update product master: increase stock and set mrp/price to purchase values
                 await client.query('UPDATE products SET stock = COALESCE(stock,0) + $1, mrp = $2, price = $3 WHERE id = $4', [qty, purchaseMrp, priceVal, productId])
                 // Insert purchase item without variant_id
-                if (hasStoreCol) {
-                  await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [created.id, productId, sku, name, qty, priceVal, lineTotal, storeId])
-                } else {
-                  await client.query('INSERT INTO purchase_items (purchase_id, product_id, sku, name, qty, price, line_total) VALUES ($1,$2,$3,$4,$5,$6,$7)', [created.id, productId, sku, name, qty, priceVal, lineTotal])
-                }
+                await insertItem({ purchaseId: id, productId, sku, name, qty, price: priceVal, lineTotal, storeId, tax_percent: (it.tax_percent ?? it.tax_pct), cess_pct: it.cess_pct, unit: it.unit, gross_amount: it.gross_amount, after_discount: it.after_discount, tax_amount: it.tax_amount, total_amount: it.total_amount, discount_pct: it.discount_pct, discount_rs: it.discount_rs })
                 continue
               }
             } catch (e) {
@@ -435,7 +471,7 @@ router.put('/:id', async (req, res) => {
           } else {
             // create variant
             const unitVal = it.unit || null
-            const taxPct = it.tax_percent != null ? Number(it.tax_percent) : 0
+            const taxPct = Number(it.tax_percent ?? it.tax_pct ?? 0)
             // Use upsert to avoid duplicate variants when concurrent requests try to create the same (product_id, mrp)
             // If product had stock recorded at the product level (pre-variants), move it into the new variant
             const prodStockRow = await client.query('SELECT stock FROM products WHERE id = $1 FOR UPDATE', [productId])
@@ -457,11 +493,7 @@ router.put('/:id', async (req, res) => {
           }
 
           // Insert purchase_item referencing productId and variantId (if available)
-          if (hasStoreCol) {
-            await client.query('INSERT INTO purchase_items (purchase_id, product_id, variant_id, sku, name, qty, price, line_total, store_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [id, productId, variantId, sku, name, qty, priceVal, lineTotal, storeId])
-          } else {
-            await client.query('INSERT INTO purchase_items (purchase_id, product_id, variant_id, sku, name, qty, price, line_total) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [id, productId, variantId, sku, name, qty, priceVal, lineTotal])
-          }
+          await insertItem({ purchaseId: id, productId, variantId, sku, name, qty, price: priceVal, lineTotal, storeId, tax_percent: (it.tax_percent ?? it.tax_pct), cess_pct: it.cess_pct, unit: it.unit, gross_amount: it.gross_amount, after_discount: it.after_discount, tax_amount: it.tax_amount, total_amount: it.total_amount, discount_pct: it.discount_pct, discount_rs: it.discount_rs })
         }
       }
 

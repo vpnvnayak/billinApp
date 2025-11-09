@@ -4,6 +4,9 @@ const dotenv = require('dotenv');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 
+// Touching this file triggers nodemon to restart during development when we need
+// to refresh the schema cache after running migrations.
+
 dotenv.config();
 
 // Startup safety checks
