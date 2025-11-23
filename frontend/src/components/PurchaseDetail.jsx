@@ -174,7 +174,8 @@ export default function PurchaseDetail({ id }) {
       } else {
         productTimer.current = setTimeout(async () => {
           try {
-            const r = await api.get('/products', { params: { query: q, limit: 20 } })
+            // Use backend's expected query param key 'q' instead of 'query'
+            const r = await api.get('/products', { params: { q, limit: 20 } })
             const data = (r && r.data) || []
             setProductSuggestions(Array.isArray(data) ? data : (data.data || []))
             setProductSuggestionsVisible(true)
@@ -490,7 +491,8 @@ export default function PurchaseDetail({ id }) {
                 onBlur={() => setTimeout(() => setProductSuggestionsVisible(false), 180)}
                 onKeyDown={e => {
                   const q = (productSearch || '').trim()
-                  const filtered = (q.length >= 3) ? (products || []).filter(p => (p.name || '').toLowerCase().includes(q.toLowerCase()) || (p.sku || '').toLowerCase().includes(q.toLowerCase())) : []
+                  // Use fetched suggestion list rather than the initial full products list for navigation
+                  const filtered = (q.length >= 3) ? (productSuggestions || []).filter(p => (p.name || '').toLowerCase().includes(q.toLowerCase()) || (p.sku || '').toLowerCase().includes(q.toLowerCase())) : []
                   if (e.key === 'ArrowDown') { e.preventDefault(); if (filtered.length > 0) { setProductHighlightedIndex(i => Math.min((filtered.length - 1), i + 1)); setProductSuggestionsVisible(true) } }
                   else if (e.key === 'ArrowUp') { e.preventDefault(); setProductHighlightedIndex(i => Math.max(-1, i - 1)) }
                   else if (e.key === 'Enter') {
