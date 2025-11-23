@@ -312,10 +312,58 @@ router.post('/', async (req, res) => {
           const saleItems = sit.rows || []
           const newSale = Object.assign({}, saleRow, { items: saleItems })
           // non-blocking
-          logger.info('Sale created', { action: 'sale.create', module: 'sales', sale: newSale }, saleRow && saleRow.store_id || storeId).catch(()=>{})
+          // Single consolidated log entry (avoid duplicate POS vs sales entries).
+          // Include invoice-specific metadata fields so UI can still filter.
+          // gather user/ip context for log meta
+          const logUserId = req.user && (req.user.sub || req.user.userId || req.user.id) ? (req.user.sub || req.user.userId || req.user.id) : null
+          const logUserEmail = req.user && req.user.email ? req.user.email : null
+          const logUserName = req.user && (req.user.full_name || req.user.name) ? (req.user.full_name || req.user.name) : null
+          const logUserRoles = req.user && req.user.roles ? req.user.roles : null
+          const logIp = (req && (req.ip || (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])))) || null
+
+          logger.info(
+            'Sale created',
+            {
+              action: 'sale.create',
+              module: 'sales',
+              sale: newSale,
+              pos_invoice: true,
+              items_count: Array.isArray(saleItems) ? saleItems.length : 0,
+              grand_total: saleRow ? saleRow.grand_total : undefined,
+              payment_method: saleRow ? saleRow.payment_method : undefined,
+              // user/ip context
+              userId: logUserId,
+              user_id: logUserId,
+              userEmail: logUserEmail,
+              userName: logUserName,
+              userRoles: logUserRoles,
+              ip: logIp
+            },
+            saleRow && saleRow.store_id || storeId
+          ).catch(()=>{})
         } catch (inner) {
           // if querying fails, still attempt to log basic info
-          try { logger.info('Sale created', { action: 'sale.create', module: 'sales', sale_id: createdId }, storeId).catch(()=>{}) } catch (e) {}
+          try {
+            try {
+              const logUserId2 = req.user && (req.user.sub || req.user.userId || req.user.id) ? (req.user.sub || req.user.userId || req.user.id) : null
+              const logUserEmail2 = req.user && req.user.email ? req.user.email : null
+              const logUserName2 = req.user && (req.user.full_name || req.user.name) ? (req.user.full_name || req.user.name) : null
+              const logUserRoles2 = req.user && req.user.roles ? req.user.roles : null
+              const logIp2 = (req && (req.ip || (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])))) || null
+              logger.info('Sale created', {
+                action: 'sale.create',
+                module: 'sales',
+                sale_id: createdId,
+                pos_invoice: true,
+                userId: logUserId2,
+                user_id: logUserId2,
+                userEmail: logUserEmail2,
+                userName: logUserName2,
+                userRoles: logUserRoles2,
+                ip: logIp2
+              }, storeId).catch(()=>{})
+            } catch (e) {}
+          } catch (e) {}
         }
       }
     } catch (e) {}
@@ -335,41 +383,298 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   const id = Number(req.params.id)
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' })
-  const { metadata, payment_method } = req.body || {}
-  if (metadata === undefined && payment_method === undefined) return res.status(400).json({ error: 'nothing to update' })
-  try {
-    // load existing sale and items
-    const s = await db.query('SELECT * FROM sales WHERE id = $1', [id])
-    if (s.rows.length === 0) return res.status(404).json({ error: 'not found' })
-    const before = s.rows[0]
-    const itemsRes = await db.query('SELECT * FROM sale_items WHERE sale_id = $1', [id])
-    const beforeItems = itemsRes.rows || []
+  const { metadata, payment_method, items } = req.body || {}
+  if (metadata === undefined && payment_method === undefined && items === undefined) return res.status(400).json({ error: 'nothing to update' })
 
-    // perform update
-    const parts = []
-    const vals = []
-    let idx = 1
-    if (payment_method !== undefined) { parts.push(`payment_method = $${idx++}`); vals.push(payment_method || null) }
-    if (metadata !== undefined) { parts.push(`metadata = $${idx++}`); vals.push(metadata || null) }
-    if (parts.length) {
-      vals.push(id)
-      await db.query(`UPDATE sales SET ${parts.join(', ')} WHERE id = $${vals.length}`, vals)
-    }
-    // reload
-    const afterRes = await db.query('SELECT * FROM sales WHERE id = $1', [id])
-    const after = afterRes.rows[0]
-    const afterItemsRes = await db.query('SELECT * FROM sale_items WHERE sale_id = $1', [id])
-    const afterItems = afterItemsRes.rows || []
-
-    // Log modification with before/after JSON
+  // If only metadata/payment_method update requested, keep the lightweight path
+  if (items === undefined) {
     try {
-      const meta = { action: 'sale.update', module: 'sales', sale_id: id, before: { sale: before, items: beforeItems }, after: { sale: after, items: afterItems } }
-      logger.info('Sale updated', meta, req.user && req.user.store_id || null).catch(()=>{})
-    } catch (e) {}
+      const s = await db.query('SELECT * FROM sales WHERE id = $1', [id])
+      if (s.rows.length === 0) return res.status(404).json({ error: 'not found' })
+      const parts = []
+      const vals = []
+      let idx = 1
+      if (payment_method !== undefined) { parts.push(`payment_method = $${idx++}`); vals.push(payment_method || null) }
+      if (metadata !== undefined) { parts.push(`metadata = $${idx++}`); vals.push(metadata || null) }
+      if (parts.length) {
+        vals.push(id)
+        await db.query(`UPDATE sales SET ${parts.join(', ')} WHERE id = $${vals.length}`, vals)
+      }
+      const afterRes = await db.query('SELECT * FROM sales WHERE id = $1', [id])
+      const after = afterRes.rows[0]
+      const itemsRes = await db.query('SELECT * FROM sale_items WHERE sale_id = $1', [id])
+      const afterItems = itemsRes.rows || []
+      try {
+        const metaLog = { action: 'sale.update', module: 'sales', sale_id: id, before: { sale: s.rows[0] }, after: { sale: after, items: afterItems } }
+        logger.info('Sale updated', metaLog, req.user && req.user.store_id || null).catch(()=>{})
+      } catch (e) {}
+      return res.json({ id: after.id })
+    } catch (e) {
+      console.error('Failed to update sale', e)
+      return res.status(500).json({ error: 'internal error' })
+    }
+  }
 
-    res.json({ id: after.id })
-  } catch (e) {
-    console.error('Failed to update sale', e)
+  // Full edit including items: perform transaction to reconcile stock and update sale snapshot
+  try {
+    const result = await tx.runTransaction(async (client) => {
+      // load existing sale and items
+      const sres = await client.query('SELECT * FROM sales WHERE id = $1 FOR UPDATE', [id])
+      if (sres.rows.length === 0) return { status: 404, json: { error: 'not found' } }
+      const before = sres.rows[0]
+      const beforeItemsRes = await client.query('SELECT * FROM sale_items WHERE sale_id = $1', [id])
+      const beforeItems = beforeItemsRes.rows || []
+
+      // attempt to reverse any loyalty/credit effects from previous sale (best-effort)
+      const prevMeta = before.metadata || {}
+      const prevUserId = before.user_id || null
+      if (prevUserId) {
+        try {
+          const hasLoyaltyCol = schemaCache.hasColumn('customers', 'loyalty_points')
+          const hasCreditCol = schemaCache.hasColumn('customers', 'credit_due')
+          if (hasLoyaltyCol && prevMeta && Number(prevMeta.loyalty_awarded || 0) > 0) {
+            const revoke = Math.min(Number(prevMeta.loyalty_awarded || 0), Number(prevMeta.loyalty_awarded || 0))
+            await client.query('UPDATE customers SET loyalty_points = GREATEST(coalesce(loyalty_points,0) - $1, 0) WHERE id = $2', [revoke, prevUserId])
+          }
+          if (hasCreditCol && prevMeta && typeof prevMeta.previous_credit !== 'undefined') {
+            // restore previous credit value
+            await client.query('UPDATE customers SET credit_due = $1 WHERE id = $2', [Number(prevMeta.previous_credit || 0), prevUserId])
+          }
+        } catch (e) {
+          console.error('Failed to reverse previous loyalty/credit', e)
+        }
+      }
+
+      // Restore stock for previous items: add back quantities
+      try {
+        for (const it of beforeItems) {
+          const vid = v.isValidInt32(it.variant_id) ? Number(it.variant_id) : null
+          const pid = v.isValidInt32(it.product_id) ? Number(it.product_id) : null
+          const qty = Number(it.qty || 0)
+          if (qty <= 0) continue
+          if (vid) {
+            await client.query('UPDATE product_variants SET stock = stock + $1::numeric WHERE id = $2', [qty, vid])
+          } else if (pid) {
+            // restore to product-level stock
+            await client.query('UPDATE products SET stock = stock + $1::numeric WHERE id = $2', [qty, pid])
+          }
+        }
+      } catch (e) {
+        console.error('Failed to restore stock for previous sale items', e)
+        throw e
+      }
+
+      // Delete previous sale_items rows
+      await client.query('DELETE FROM sale_items WHERE sale_id = $1', [id])
+
+      // Validate incoming items array
+      if (!items || !Array.isArray(items) || items.length === 0) return { status: 400, json: { error: 'items required' } }
+      for (const [idx, it] of items.entries()) {
+        if (typeof it !== 'object' || it === null) return { status: 400, json: { error: `item[${idx}] must be an object` } }
+        if (!('qty' in it)) return { status: 400, json: { error: `item[${idx}].qty required` } }
+        if (!('price' in it)) return { status: 400, json: { error: `item[${idx}].price required` } }
+        if (!v.isPositiveNumber(it.qty)) return { status: 400, json: { error: `item[${idx}].qty must be a positive number` } }
+        if (!v.isNonNegativeNumber(it.price)) return { status: 400, json: { error: `item[${idx}].price must be a non-negative number` } }
+        if ('tax_percent' in it && !v.isNonNegativeNumber(it.tax_percent)) return { status: 400, json: { error: `item[${idx}].tax_percent must be a non-negative number` } }
+        if ('product_id' in it && it.product_id !== null && it.product_id !== undefined && !v.isValidInt32(it.product_id)) return { status: 400, json: { error: `item[${idx}].product_id must be a 32-bit integer` } }
+      }
+
+      // Now apply new items: check and decrement stock similar to create flow
+      for (const it of items) {
+        const pid = v.isValidInt32(it.product_id) ? Number(it.product_id) : null
+        if (!pid) continue
+        const qty = Number(it.qty || 0)
+        const specifiedVariantId = v.isValidInt32(it.variant_id) ? Number(it.variant_id) : null
+        if (specifiedVariantId) {
+          const vr = await client.query('SELECT id, stock, product_id FROM product_variants WHERE id = $1 FOR UPDATE', [specifiedVariantId])
+          if (vr.rows.length === 0) return { status: 400, json: { error: `variant not found ${specifiedVariantId}` } }
+          if (Number(vr.rows[0].product_id) !== pid) return { status: 400, json: { error: `variant ${specifiedVariantId} does not belong to product ${pid}` } }
+          const avail = Number(vr.rows[0].stock || 0)
+          if (avail < qty) return { status: 400, json: { error: `insufficient stock for variant ${specifiedVariantId}` } }
+          await client.query('UPDATE product_variants SET stock = GREATEST(0, stock - $1::numeric) WHERE id = $2', [qty, specifiedVariantId])
+          continue
+        }
+
+        if (it.use_product_stock) {
+          const pr = await client.query('SELECT stock FROM products WHERE id = $1 FOR UPDATE', [pid])
+          if (pr.rows.length === 0) return { status: 400, json: { error: `product not found ${pid}` } }
+          const pstock = Number(pr.rows[0].stock || 0)
+          if (pstock < qty) return { status: 400, json: { error: `insufficient product stock for product ${pid}` } }
+          await client.query('UPDATE products SET stock = stock - $1::numeric WHERE id = $2', [qty, pid])
+          continue
+        }
+
+        // Try to find variants for this product and lock them
+        let vrows
+        try {
+          vrows = await client.query('SELECT id, stock FROM product_variants WHERE product_id = $1 FOR UPDATE', [pid])
+        } catch (e) {
+          vrows = { rows: [] }
+        }
+
+        if (vrows.rows && vrows.rows.length > 0) {
+          const total = vrows.rows.reduce((s, r) => s + Number(r.stock || 0), 0)
+          if (total < qty) return { status: 400, json: { error: `insufficient stock for product ${pid}` } }
+          let remaining = qty
+          for (const vr of vrows.rows) {
+            if (remaining <= 0) break
+            const avail = Number(vr.stock || 0)
+            if (avail <= 0) continue
+            const take = Math.min(avail, remaining)
+            await client.query('UPDATE product_variants SET stock = GREATEST(0, stock - $1::numeric) WHERE id = $2', [take, vr.id])
+            remaining -= take
+          }
+        } else {
+          const r = await client.query('SELECT stock FROM products WHERE id = $1 FOR UPDATE', [pid])
+          if (r.rows.length === 0) return { status: 400, json: { error: `product not found ${pid}` } }
+          const stock = Number(r.rows[0].stock || 0)
+          if (stock < qty) return { status: 400, json: { error: `insufficient stock for product ${pid}` } }
+          await client.query('UPDATE products SET stock = stock - $1::numeric WHERE id = $2', [qty, pid])
+        }
+      }
+
+      // Compute totals for new items
+      let subtotal = 0; let tax_total = 0
+      for (const it of items) {
+        const line = Number(it.qty || 0) * Number(it.price || 0)
+        subtotal += line
+        tax_total += line * ((Number(it.tax_percent || 0))/100.0)
+      }
+      const grand = subtotal + tax_total
+
+      // Update sale row with new totals and metadata/payment_method
+      const safeMetadata = metadata !== undefined ? metadata : before.metadata
+      const safePaymentMethod = payment_method !== undefined ? payment_method : before.payment_method
+      await client.query('UPDATE sales SET subtotal=$1, tax_total=$2, grand_total=$3, payment_method=$4, metadata=$5 WHERE id=$6', [subtotal.toFixed(2), tax_total.toFixed(2), grand.toFixed(2), safePaymentMethod || null, safeMetadata || null, id])
+
+      // Insert new sale_items snapshot
+      const hasMrpCol = schemaCache.hasColumn('sale_items', 'mrp')
+      const saleItemsHasStore = schemaCache.hasColumn('sale_items', 'store_id')
+      const saleItemsHasVariant = schemaCache.hasColumn('sale_items', 'variant_id')
+      const storeId = req.user && req.user.store_id ? req.user.store_id : null
+      for (const it of items) {
+        const qtyVal = Number(it.qty || 0)
+        const priceVal = Number(it.price || 0)
+        const line_total = qtyVal * priceVal
+        const pid = v.isValidInt32(it.product_id) ? Number(it.product_id) : null
+        try {
+          let mrpVal = (typeof it.mrp !== 'undefined' && it.mrp !== null) ? Number(it.mrp) : null
+          let taxPercentVal = (typeof it.tax_percent !== 'undefined' && it.tax_percent !== null) ? Number(it.tax_percent) : 0
+          let skuVal = it.sku || null
+          let nameVal = it.name || null
+          if (pid) {
+            const pr = await client.query('SELECT sku, name, mrp AS product_mrp, price AS product_price, tax_percent AS product_tax FROM products WHERE id = $1', [pid])
+            const p = pr.rows && pr.rows[0] ? pr.rows[0] : null
+            if (p) {
+              skuVal = skuVal || p.sku || null
+              nameVal = nameVal || p.name || null
+              if (mrpVal === null) {
+                if (p.product_mrp != null) mrpVal = Number(p.product_mrp)
+                else if (p.product_price != null) mrpVal = Number(p.product_price)
+              }
+              if ((!taxPercentVal || taxPercentVal === 0) && (p.product_tax != null)) {
+                taxPercentVal = Number(p.product_tax)
+              }
+            }
+            const vid = v.isValidInt32(it.variant_id) ? Number(it.variant_id) : null
+            if (vid) {
+              try {
+                const vr = await client.query('SELECT mrp AS variant_mrp, price AS variant_price, tax_percent AS variant_tax, barcode FROM product_variants WHERE id = $1', [vid])
+                const vrow = vr.rows && vr.rows[0] ? vr.rows[0] : null
+                if (vrow) {
+                  if (vrow.variant_mrp != null) mrpVal = Number(vrow.variant_mrp)
+                  if (vrow.variant_tax != null) taxPercentVal = Number(vrow.variant_tax)
+                }
+              } catch (e) {}
+            }
+          }
+          if (mrpVal === null || isNaN(mrpVal)) mrpVal = Number(priceVal || 0)
+          const cols = ['sale_id','product_id']
+          const vals = [id, pid]
+          if (saleItemsHasVariant) { cols.push('variant_id'); vals.push(v.isValidInt32(it.variant_id) ? Number(it.variant_id) : null) }
+          cols.push('sku'); vals.push(skuVal)
+          cols.push('name'); vals.push(nameVal)
+          cols.push('qty'); vals.push(qtyVal)
+          cols.push('price'); vals.push(priceVal)
+          cols.push('tax_percent'); vals.push(taxPercentVal)
+          cols.push('line_total'); vals.push(line_total.toFixed(2))
+          if (hasMrpCol) { cols.push('mrp'); vals.push(mrpVal.toFixed(2)) }
+          if (saleItemsHasStore) { cols.push('store_id'); vals.push(storeId || null) }
+          const placeholders = vals.map((_, i) => `$${i+1}`).join(',')
+          const sql = `INSERT INTO sale_items (${cols.join(',')}) VALUES (${placeholders})`
+          await client.query(sql, vals)
+        } catch (e) {
+          console.error('Failed inserting sale_item for sale', id, 'item:', { pid, sku: it.sku, name: it.name, qty: it.qty, price: it.price })
+          throw e
+        }
+      }
+
+      // After inserting new items, handle loyalty/credit similar to create flow
+      const safeUserId = v.normalizeUserId(before.user_id)
+      const awardPoints = Math.floor(Number(grand || 0) / 100)
+      const payment_breakdown = (metadata && metadata.payment_breakdown) ? metadata.payment_breakdown : (metadata || {})
+      const loyaltyUsed = (payment_breakdown && Number(payment_breakdown.loyalty_used)) ? Math.max(0, Math.floor(Number(payment_breakdown.loyalty_used))) : 0
+      let totalLoyaltyUsed = 0
+      let priorCredit = 0
+      const metadataWithLoyalty = Object.assign({}, payment_breakdown || {}, { loyalty_awarded: awardPoints, loyalty_used: loyaltyUsed })
+      if (safeUserId) {
+        try {
+          const cres = await client.query('SELECT COALESCE(loyalty_points,0) AS loyalty_points, COALESCE(credit_due,0)::numeric AS credit_due FROM customers WHERE id = $1 FOR UPDATE', [safeUserId])
+          let avail = Number((cres.rows[0] && cres.rows[0].loyalty_points) || 0)
+          priorCredit = Number((cres.rows[0] && cres.rows[0].credit_due) || 0)
+          const requested = Math.max(0, Math.floor(Number(loyaltyUsed || 0)))
+          const deductRequested = Math.min(avail, requested)
+          if (deductRequested > 0) {
+            await client.query('UPDATE customers SET loyalty_points = GREATEST(coalesce(loyalty_points,0) - $1, 0) WHERE id = $2', [deductRequested, safeUserId])
+            avail -= deductRequested
+          }
+          totalLoyaltyUsed = deductRequested
+          const paidAmount = (payment_breakdown ? (Number(payment_breakdown.card||0) + Number(payment_breakdown.cash||0) + Number(payment_breakdown.upi||0)) : 0)
+          const paidPlusRequested = Number(paidAmount || 0) + totalLoyaltyUsed
+          if ((Number(paidAmount || 0) > 0) && paidPlusRequested < Number(grand || 0) && avail > 0) {
+            const deficit = Math.max(0, Number(grand || 0) - paidPlusRequested)
+            const autoToUse = Math.min(avail, Math.max(0, Math.floor(deficit)))
+            if (autoToUse > 0) {
+              await client.query('UPDATE customers SET loyalty_points = GREATEST(coalesce(loyalty_points,0) - $1, 0) WHERE id = $2', [autoToUse, safeUserId])
+              totalLoyaltyUsed += autoToUse
+              avail -= autoToUse
+            }
+          }
+          metadataWithLoyalty.loyalty_used = loyaltyUsed
+          metadataWithLoyalty.loyalty_available = Number(avail || 0)
+          const hasCreditCol = schemaCache.hasColumn('customers', 'credit_due')
+          if (hasCreditCol) {
+            const paidAmount = (payment_breakdown ? (Number(payment_breakdown.card||0) + Number(payment_breakdown.cash||0) + Number(payment_breakdown.upi||0)) : 0)
+            const totalDue = Number(grand || 0) + Number(priorCredit || 0)
+            const deficit = Math.max(0, totalDue - (Number(paidAmount || 0) + Number(totalLoyaltyUsed || 0)))
+            await client.query('UPDATE customers SET credit_due = $1 WHERE id = $2', [deficit.toFixed(2), safeUserId])
+            metadataWithLoyalty.previous_credit = priorCredit
+            metadataWithLoyalty.credit_added = deficit
+            await client.query('UPDATE sales SET metadata = $1 WHERE id = $2', [metadataWithLoyalty || null, id])
+          }
+        } catch (e) {
+          console.error('Failed updating customer loyalty/credit on edit', e)
+        }
+      }
+
+      return { status: 200, json: { id } }
+    }, { route: 'sales.update' })
+
+    if (result && result.status) {
+      // Log modification with before/after snapshots
+      try {
+        const sres = await db.query('SELECT id, created_at, subtotal, tax_total, grand_total, payment_method, metadata, store_id, user_id FROM sales WHERE id = $1', [id])
+        const sit = await db.query('SELECT id, product_id, variant_id, sku, name, qty, price, tax_percent, line_total FROM sale_items WHERE sale_id = $1', [id])
+        const saleRow = sres.rows && sres.rows[0] ? sres.rows[0] : null
+        const saleItems = sit.rows || []
+        const meta = { action: 'sale.update', module: 'sales', sale_id: id, after: { sale: saleRow, items: saleItems } }
+        logger.info('Sale updated', meta, saleRow && saleRow.store_id || null).catch(()=>{})
+      } catch (e) { console.error('Failed logging sale update', e) }
+      return res.status(result.status).json(result.json)
+    }
+    res.status(500).json({ error: 'internal error' })
+  } catch (err) {
+    console.error('Sale update failed', err)
     res.status(500).json({ error: 'internal error' })
   }
 })

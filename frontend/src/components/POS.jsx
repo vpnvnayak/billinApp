@@ -4,7 +4,7 @@ import api from '../services/api'
 import { printThermal } from '../services/print'
 import { isValidEmail, isValidPhone } from '../utils/validation'
 
-export default function POS() {
+export default function POS({ editSaleId }) {
   // helper to format numbers as Indian rupees
   function formatCurrency(n, opts = {}) {
     const num = Number(n) || 0
@@ -263,6 +263,66 @@ export default function POS() {
     try { inputRef.current && inputRef.current.focus() } catch (e) {}
   }, [])
 
+  // If editSaleId is provided, fetch sale details and prepopulate cart and payment fields
+  useEffect(() => {
+    if (!editSaleId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        setLoading(true)
+        const r = await api.get(`/sales/${editSaleId}`)
+        let payload = r.data
+        if (r.data && r.data.sale) payload = { ...r.data.sale, sale_items: r.data.items || [] }
+        const sale = payload.sale || payload
+        const items = payload.items || payload.sale_items || []
+
+        const mapped = (items || []).map(it => {
+          const pid = it.product_id || (it.product && it.product.id) || null
+          const vid = it.variant_id || null
+          const qty = Number(it.qty || it.quantity || it.qty || 1)
+          const tax = Number(it.tax_percent || it.tax || 0)
+          // backend stores unit price (exclusive). Convert to inclusive price for POS UI
+          const unitExclusive = Number(it.price || it.unit_price || 0)
+          const priceInclusive = unitExclusive * (1 + (tax / 100.0))
+          const cartId = `${pid}:${vid || 'm'}`
+          return { id: pid, variant_id: vid, sku: it.sku, name: it.name, qty, price: Number(priceInclusive.toFixed(2)), tax_percent: tax, mrp: (typeof it.mrp !== 'undefined' ? it.mrp : null), cartId }
+        })
+        if (!cancelled) {
+          setCart(mapped)
+          // customer mapping: try sale.user_id or sale.customer_id or metadata
+          const custId = sale.user_id || sale.customer_id || (sale.metadata && sale.metadata.customer_id) || null
+          if (custId) {
+            setSelectedCustomer(custId)
+            // set a display string for the customer field
+            const name = (sale.metadata && (sale.metadata.customer_name || sale.metadata.name)) || sale.customer_name || ''
+            const phone = (sale.metadata && sale.metadata.customer_phone) || sale.customer_phone || ''
+            setCustomerQuery(name ? `${name}${phone ? ' (' + phone + ')' : ''}` : '')
+          } else if (sale.metadata && (sale.metadata.customer_name || sale.metadata.customer_phone)) {
+            const name = sale.metadata.customer_name || ''
+            const phone = sale.metadata.customer_phone || ''
+            setCustomerQuery(name ? `${name}${phone ? ' (' + phone + ')' : ''}` : '')
+          }
+
+          // payment info
+          setPayMethod(sale.payment_method || (sale.metadata && sale.metadata.payment_method) || 'cash')
+          const pb = sale.payment_breakdown || sale.metadata || {}
+          setCardAmount(pb.card || pb.card_amount || 0)
+          setCashGiven(pb.cash || 0)
+          setUpiAmount(pb.upi || 0)
+          setDiscountPercent(pb.discount_percent || 0)
+          setDiscountRs(pb.discount_rs || 0)
+          setRemarks(pb.remarks || pb.remark || '')
+        }
+      } catch (e) {
+        console.error('Failed to load sale for edit', e)
+        import('../services/ui').then(m => m.showAlert('Failed to load sale for editing'))
+      } finally {
+        setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [editSaleId])
+
   // autofocus MRP input when prompt opens
   useEffect(() => {
     if (mrpPrompt && mrpInputRef && mrpInputRef.current) {
@@ -434,35 +494,59 @@ export default function POS() {
       user_id: selectedCustomer || null
     }
     try {
-      const r = await api.post('/sales', payload)
-      setSaleResult(r.data)
-      // print receipt (A3) using snapshot of items and breakdown
-      try {
-        // use shared printer to include store header, items and payment breakdown
-        // server create response may not include customer fields; merge local customer info into metadata for printing
-        const printSale = Object.assign({}, r.data)
-        const meta = Object.assign({}, (r.data && r.data.metadata) || {})
-        if (selectedCustomer) {
-          const found = (customers || []).find(c => String(c.id) === String(selectedCustomer))
-          if (found) {
-            if (!meta.customer_name) meta.customer_name = found.name || ''
-            if (!meta.customer_phone) meta.customer_phone = found.phone || ''
-            if (meta.loyalty_available === undefined || meta.loyalty_available === null) meta.loyalty_available = Number(found.loyalty_points || 0)
-          }
-        } else if (customerQuery) {
-          // fallback to the typed customer query text
-          if (!meta.customer_name) meta.customer_name = customerQuery
+      let r
+      if (editSaleId) {
+        // Update existing sale (replace items)
+        r = await api.put(`/sales/${editSaleId}`, Object.assign({}, payload, { items: payload.items }))
+        setSaleResult(r.data)
+        // fetch updated sale for authoritative snapshot and printing
+        try {
+          const fetch = await api.get(`/sales/${editSaleId}`)
+          let payloadSale = fetch.data
+          if (fetch.data && fetch.data.sale) payloadSale = { ...fetch.data.sale, sale_items: fetch.data.items || [] }
+          const printSale = payloadSale.sale || payloadSale
+          const itemsToPrint = payloadSale.items || payloadSale.sale_items || []
+          const pb = printSale.payment_breakdown || printSale.metadata || payload.payment_breakdown || {}
+          try { printThermal(printSale, itemsToPrint, pb) } catch (e) { console.error('print failed', e) }
+        } catch (e) {
+          console.error('failed to fetch updated sale for printing', e)
         }
-        printSale.metadata = meta
-        printThermal(printSale, payload.items, payload.payment_breakdown)
-      } catch (e) {
-        console.error('print failed', e)
+        // clear cart and navigate back to sales list
+        setCart([])
+        setShowPay(false)
+        try { if (window && window.__appNavigate) window.__appNavigate('/sales'); else { try { window.history.pushState(null, '', '/sales') } catch (err) {} window.location.reload() } } catch (e) {}
+      } else {
+        // create new sale
+        r = await api.post('/sales', payload)
+        setSaleResult(r.data)
+        // print receipt (A3) using snapshot of items and breakdown
+        try {
+          // use shared printer to include store header, items and payment breakdown
+          // server create response may not include customer fields; merge local customer info into metadata for printing
+          const printSale = Object.assign({}, r.data)
+          const meta = Object.assign({}, (r.data && r.data.metadata) || {})
+          if (selectedCustomer) {
+            const found = (customers || []).find(c => String(c.id) === String(selectedCustomer))
+            if (found) {
+              if (!meta.customer_name) meta.customer_name = found.name || ''
+              if (!meta.customer_phone) meta.customer_phone = found.phone || ''
+              if (meta.loyalty_available === undefined || meta.loyalty_available === null) meta.loyalty_available = Number(found.loyalty_points || 0)
+            }
+          } else if (customerQuery) {
+            // fallback to the typed customer query text
+            if (!meta.customer_name) meta.customer_name = customerQuery
+          }
+          printSale.metadata = meta
+          printThermal(printSale, payload.items, payload.payment_breakdown)
+        } catch (e) {
+          console.error('print failed', e)
+        }
+        // clear cart on success
+        setCart([])
+        setShowPay(false)
+        // focus barcode input so cashier can continue scanning
+        try { inputRef.current && inputRef.current.focus() } catch (e) {}
       }
-      // clear cart on success
-      setCart([])
-      setShowPay(false)
-      // focus barcode input so cashier can continue scanning
-      try { inputRef.current && inputRef.current.focus() } catch (e) {}
     } catch (err) {
       console.error('Sale error', err)
       import('../services/ui').then(m => m.showAlert((err && err.response && err.response.data && err.response.data.error) || 'Failed to create sale'))
@@ -645,6 +729,7 @@ export default function POS() {
   return (
     <div className="pos-page">
       <div className="pos-top">
+        {editSaleId ? <div style={{ marginBottom: 8, padding: 8, background: '#fff6e6', border: '1px solid #f0d9b5' }}>Editing sale <strong>{`GCK${editSaleId}`}</strong></div> : null}
         <div className="pos-search pos-search-half">
           <input ref={inputRef} placeholder="Search barcode" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={handleInputKeyDown} />
           <button className="icon"><MagnifyingGlassIcon style={{ width: 18, height: 18 }} /></button>

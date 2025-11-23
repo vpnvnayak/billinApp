@@ -95,6 +95,15 @@ export default function App() {
       try { window.history.pushState(null, '', to) } catch (e) {}
       setRoute(to)
     }
+    // helper to open a sale in edit mode (used by Sales list)
+    window.__openSaleEdit = function(id) {
+      try {
+        if (!id) return
+        window.__appNavigate(`/sales/${id}/edit`)
+      } catch (e) {
+        console.error('openSaleEdit failed', e)
+      }
+    }
     return () => { window.removeEventListener('popstate', onPop); window.removeEventListener('pageshow', onPageShow); window.removeEventListener('navigate', onNavigate) }
   }, [])
 
@@ -248,6 +257,10 @@ export default function App() {
                 return <section className="products"><PurchaseDetail id={id} /></section>
               })()}
               {route === '/sales' && <section className="products"><Sales /></section>}
+              {route.startsWith('/sales/') && route.endsWith('/edit') && (() => {
+                const id = route.split('/')[2]
+                return <section className="products"><POS editSaleId={id} /></section>
+              })()}
               {route === '/reports' && <section className="products"><Reports /></section>}
               {route === '/users' && <section className="products"><AdminUsers user={user} /></section>}
               {route === '/' && (

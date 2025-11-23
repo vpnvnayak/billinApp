@@ -112,7 +112,7 @@ router.post('/login', async (req, res) => {
   const storeRow = await db.query('SELECT store_id FROM users WHERE id = $1', [user.id]);
   const store_id = (storeRow.rows[0] && storeRow.rows[0].store_id) || null
 
-  const payload = { sub: user.id, email: user.email, roles, store_id };
+  const payload = { sub: user.id, email: user.email, full_name: user.full_name || null, roles, store_id };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
       // create a refresh token, store it with expiry, and set as HttpOnly cookie
       const refresh = crypto.randomBytes(48).toString('hex');
