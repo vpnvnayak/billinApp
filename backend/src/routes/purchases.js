@@ -150,6 +150,7 @@ router.post('/', async (req, res) => {
         const hasStoreCol = schemaCache.hasColumn('purchase_items', 'store_id')
         for (const it of items) {
           const qty = Number(it.qty || 0)
+          const taxPct = Number(it.tax_percent ?? it.tax_pct ?? 0)
           const purchaseMrp = it.mrp !== undefined ? it.mrp : null
           const sku = it.sku || null
           const name = it.name || null
@@ -187,7 +188,8 @@ router.post('/', async (req, res) => {
                 const prod = r.rows[0]
                 const prodMrp = prod.mrp !== undefined ? prod.mrp : null
                 if ((prodMrp === null && purchaseMrp === null) || (prodMrp !== null && purchaseMrp !== null && Number(prodMrp) === Number(purchaseMrp))) {
-                  await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [qty, prod.id])
+                  // persist tax into product when incoming tax provided
+                  await client.query('UPDATE products SET stock = stock + $1, tax_percent = CASE WHEN $2 > 0 THEN $2 ELSE tax_percent END WHERE id = $3', [qty, taxPct, prod.id])
                   resolvedProductId = prod.id
                 } else {
                   resolvedProductId = await createProductForPurchase()
@@ -199,16 +201,16 @@ router.post('/', async (req, res) => {
               if (sku) {
                 if (storeId) {
                   const rr = await client.query('SELECT id FROM products WHERE LOWER(sku) = LOWER($1) AND mrp IS NOT DISTINCT FROM $2 AND store_id = $3 FOR UPDATE', [sku, purchaseMrp, storeId])
-                  if (rr.rows.length > 0) {
+                    if (rr.rows.length > 0) {
                     const pid2 = rr.rows[0].id
-                    await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [qty, pid2])
+                    await client.query('UPDATE products SET stock = stock + $1, tax_percent = CASE WHEN $2 > 0 THEN $2 ELSE tax_percent END WHERE id = $3', [qty, taxPct, pid2])
                     resolvedProductId = pid2
                   }
                 } else {
                   const rr = await client.query('SELECT id FROM products WHERE LOWER(sku) = LOWER($1) AND mrp IS NOT DISTINCT FROM $2 FOR UPDATE', [sku, purchaseMrp])
                   if (rr.rows.length > 0) {
                     const pid2 = rr.rows[0].id
-                    await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [qty, pid2])
+                    await client.query('UPDATE products SET stock = stock + $1, tax_percent = CASE WHEN $2 > 0 THEN $2 ELSE tax_percent END WHERE id = $3', [qty, taxPct, pid2])
                     resolvedProductId = pid2
                   }
                 }
@@ -250,7 +252,8 @@ router.post('/', async (req, res) => {
               const isRepacking = pr.rows.length ? (pr.rows[0].is_repacking === true || pr.rows[0].is_repacking === 't') : false
               if (isRepacking) {
                 // Update product master: increase stock and set mrp/price to purchase values
-                await client.query('UPDATE products SET stock = COALESCE(stock,0) + $1, mrp = $2, price = $3 WHERE id = $4', [qty, purchaseMrp, priceVal, productId])
+                // Also persist incoming tax_percent when provided
+                await client.query('UPDATE products SET stock = COALESCE(stock,0) + $1, mrp = $2, price = $3, tax_percent = CASE WHEN $4 > 0 THEN $4 ELSE tax_percent END WHERE id = $5', [qty, purchaseMrp, priceVal, taxPct, productId])
                 // Insert purchase item without variant_id
                 await insertItem({ purchaseId: created.id, productId, sku, name, qty, price: priceVal, lineTotal, storeId, tax_percent: (it.tax_percent ?? it.tax_pct), cess_pct: it.cess_pct, unit: it.unit, gross_amount: it.gross_amount, after_discount: it.after_discount, tax_amount: it.tax_amount, total_amount: it.total_amount, discount_pct: it.discount_pct, discount_rs: it.discount_rs })
                 continue
@@ -262,14 +265,14 @@ router.post('/', async (req, res) => {
 
           let variantId = null
           const vrr = await client.query('SELECT id, mrp FROM product_variants WHERE product_id = $1 AND mrp IS NOT DISTINCT FROM $2 FOR UPDATE', [productId, purchaseMrp])
+
           if (vrr.rows.length > 0) {
             variantId = vrr.rows[0].id
-            // update stock
-            await client.query('UPDATE product_variants SET stock = stock + $1 WHERE id = $2', [qty, variantId])
+            // update stock and, when available, persist tax from purchase into the variant
+            await client.query('UPDATE product_variants SET stock = stock + $1, tax_percent = CASE WHEN $2 > 0 THEN $2 ELSE tax_percent END WHERE id = $3', [qty, taxPct, variantId])
           } else {
             // create variant
             const unitVal = it.unit || null
-            const taxPct = Number(it.tax_percent ?? it.tax_pct ?? 0)
             // Use upsert to avoid duplicate variants when concurrent requests try to create the same (product_id, mrp)
             // If product had stock recorded at the product level (pre-variants), move it into the new variant
             const prodStockRow = await client.query('SELECT stock FROM products WHERE id = $1 FOR UPDATE', [productId])
@@ -352,6 +355,7 @@ router.put('/:id', async (req, res) => {
         const hasStoreCol = schemaCache.hasColumn('purchase_items', 'store_id')
         for (const it of items) {
           const qty = Number(it.qty || 0)
+          const taxPct = Number(it.tax_percent ?? it.tax_pct ?? 0)
           const purchaseMrp = it.mrp !== undefined ? it.mrp : null
           const sku = it.sku || null
           const name = it.name || null
@@ -389,7 +393,8 @@ router.put('/:id', async (req, res) => {
                 const prod = r.rows[0]
                 const prodMrp = prod.mrp !== undefined ? prod.mrp : null
                 if ((prodMrp === null && purchaseMrp === null) || (prodMrp !== null && purchaseMrp !== null && Number(prodMrp) === Number(purchaseMrp))) {
-                  await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [qty, prod.id])
+                  // persist tax into product when incoming tax provided
+                  await client.query('UPDATE products SET stock = stock + $1, tax_percent = CASE WHEN $2 > 0 THEN $2 ELSE tax_percent END WHERE id = $3', [qty, taxPct, prod.id])
                   resolvedProductId = prod.id
                 } else {
                   resolvedProductId = await createProductForPurchase()
@@ -403,14 +408,14 @@ router.put('/:id', async (req, res) => {
                   const rr = await client.query('SELECT id FROM products WHERE LOWER(sku) = LOWER($1) AND mrp IS NOT DISTINCT FROM $2 AND store_id = $3 FOR UPDATE', [sku, purchaseMrp, storeId])
                   if (rr.rows.length > 0) {
                     const pid2 = rr.rows[0].id
-                    await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [qty, pid2])
+                    await client.query('UPDATE products SET stock = stock + $1, tax_percent = CASE WHEN $2 > 0 THEN $2 ELSE tax_percent END WHERE id = $3', [qty, taxPct, pid2])
                     resolvedProductId = pid2
                   }
                 } else {
                   const rr = await client.query('SELECT id FROM products WHERE LOWER(sku) = LOWER($1) AND mrp IS NOT DISTINCT FROM $2 FOR UPDATE', [sku, purchaseMrp])
                   if (rr.rows.length > 0) {
                     const pid2 = rr.rows[0].id
-                    await client.query('UPDATE products SET stock = stock + $1 WHERE id = $2', [qty, pid2])
+                    await client.query('UPDATE products SET stock = stock + $1, tax_percent = CASE WHEN $2 > 0 THEN $2 ELSE tax_percent END WHERE id = $3', [qty, taxPct, pid2])
                     resolvedProductId = pid2
                   }
                 }
@@ -452,7 +457,8 @@ router.put('/:id', async (req, res) => {
               const isRepacking = pr.rows.length ? (pr.rows[0].is_repacking === true || pr.rows[0].is_repacking === 't') : false
               if (isRepacking) {
                 // Update product master: increase stock and set mrp/price to purchase values
-                await client.query('UPDATE products SET stock = COALESCE(stock,0) + $1, mrp = $2, price = $3 WHERE id = $4', [qty, purchaseMrp, priceVal, productId])
+                // Also persist incoming tax_percent when provided
+                await client.query('UPDATE products SET stock = COALESCE(stock,0) + $1, mrp = $2, price = $3, tax_percent = CASE WHEN $4 > 0 THEN $4 ELSE tax_percent END WHERE id = $5', [qty, purchaseMrp, priceVal, taxPct, productId])
                 // Insert purchase item without variant_id
                 await insertItem({ purchaseId: id, productId, sku, name, qty, price: priceVal, lineTotal, storeId, tax_percent: (it.tax_percent ?? it.tax_pct), cess_pct: it.cess_pct, unit: it.unit, gross_amount: it.gross_amount, after_discount: it.after_discount, tax_amount: it.tax_amount, total_amount: it.total_amount, discount_pct: it.discount_pct, discount_rs: it.discount_rs })
                 continue
@@ -466,12 +472,11 @@ router.put('/:id', async (req, res) => {
           const vrr = await client.query('SELECT id, mrp FROM product_variants WHERE product_id = $1 AND mrp IS NOT DISTINCT FROM $2 FOR UPDATE', [productId, purchaseMrp])
           if (vrr.rows.length > 0) {
             variantId = vrr.rows[0].id
-            // update stock
-            await client.query('UPDATE product_variants SET stock = stock + $1 WHERE id = $2', [qty, variantId])
+            // update stock and persist tax on variant when provided
+            await client.query('UPDATE product_variants SET stock = stock + $1, tax_percent = CASE WHEN $2 > 0 THEN $2 ELSE tax_percent END WHERE id = $3', [qty, taxPct, variantId])
           } else {
             // create variant
             const unitVal = it.unit || null
-            const taxPct = Number(it.tax_percent ?? it.tax_pct ?? 0)
             // Use upsert to avoid duplicate variants when concurrent requests try to create the same (product_id, mrp)
             // If product had stock recorded at the product level (pre-variants), move it into the new variant
             const prodStockRow = await client.query('SELECT stock FROM products WHERE id = $1 FOR UPDATE', [productId])

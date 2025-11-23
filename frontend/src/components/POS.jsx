@@ -316,7 +316,10 @@ export default function POS() {
       if (existing) {
         return c.map(it => it.cartId === cartId ? { ...it, qty: Number(it.qty || 0) + addedQty } : it)
       }
-      const item = { ...p, qty: addedQty, cartId }
+      // Normalize tax field names so UI always has tax_percent available (support tax_pct/taxPercent)
+      const normalized = Object.assign({}, p)
+      if (normalized.tax_percent == null) normalized.tax_percent = (normalized.taxPercent != null ? normalized.taxPercent : (Number(normalized.tax_pct) || 0))
+      const item = { ...normalized, qty: addedQty, cartId }
       return [...c, item]
     })
     setQuery('')

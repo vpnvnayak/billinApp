@@ -17,6 +17,8 @@ export default function Products() {
   const [entries, setEntries] = useState(10)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  const [previewRows, setPreviewRows] = useState([])
+  const [showImport, setShowImport] = useState(false)
 
   useEffect(() => {
     fetchProducts()
@@ -97,6 +99,47 @@ export default function Products() {
 
         {/* FIX: consolidate header actions into a single flex container */}
         <div className="page-header-actions" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            id="product-json-file"
+            type="file"
+            accept="application/json"
+            style={{ display: 'none' }}
+            onChange={async (e) => {
+              const f = e.target.files && e.target.files[0]
+              if (!f) return
+              try {
+                const text = await f.text()
+                const parsed = JSON.parse(text)
+                const items = Array.isArray(parsed) ? parsed : (parsed.products || parsed.items || parsed.rows || [])
+                if (!Array.isArray(items)) throw new Error('No array found in JSON')
+                const mapped = items.map((it) => ({
+                  // best-effort automatic mapping
+                  name: it.name || it.product_name || it.title || it.label || '',
+                  sku: it.sku || it.barcode || it.code || it.upc || it.id || '',
+                  barcode: it.barcode || it.sku || '',
+                  mrp: it.mrp != null ? Number(it.mrp) : (it.price || null),
+                  price: it.price != null ? Number(it.price) : (it.mrp || null),
+                  tax_percent: it.taxRate != null ? Number(it.taxRate) : (it.tax_percent != null ? Number(it.tax_percent) : 0),
+                  unit: it.unit || it.uom || it.unit_of_measure || 'Nos',
+                  stock: it.stock != null ? Number(it.stock) : (it.qty != null ? Number(it.qty) : 0),
+                  hsn: it.hsn || it.hsn_code || null,
+                  is_repacking: !!it.is_repacking || !!it.repacking
+                }))
+                console.log('Parsed product JSON, rows=', mapped.length)
+                // give immediate visible feedback in UI
+                setPreviewRows(mapped)
+                setShowImport(true)
+                try { alert(`Loaded ${mapped.length} product rows for import`) } catch (e) { /* ignore if alert blocked */ }
+                // Show preview modal; user must confirm import using the Import button below.
+              } catch (err) {
+                console.error('Failed to parse product JSON', err)
+                alert('Failed to parse JSON file: ' + (err && err.message ? err.message : 'invalid file'))
+              } finally {
+                // reset the input so same file can be reselected later
+                e.target.value = ''
+              }
+            }}
+          />
           <button
             className="btn small"
             onClick={() => {
@@ -173,6 +216,14 @@ export default function Products() {
 
           <button className="btn small" onClick={() => setShowCreate(true)}>
             <PlusIcon style={{ width: 14, height: 14, marginRight: 8 }} aria-hidden /> Add product
+          </button>
+          <button
+            className="btn small"
+            onClick={() => document.getElementById('product-json-file').click()}
+            title="Upload products JSON"
+            style={{ marginLeft: 6 }}
+          >
+            Upload products (JSON)
           </button>
         </div>
       </div>
@@ -375,6 +426,20 @@ export default function Products() {
           }}
         />
       )}
+
+      {/* Import preview modal */}
+      {showImport && (
+        <ImportPreviewModal
+          rows={previewRows}
+          onClose={() => { setShowImport(false); setPreviewRows([]) }}
+          onImported={async (result) => {
+            setShowImport(false)
+            setPreviewRows([])
+            await fetchProducts()
+            try { alert('Import completed: ' + (result && result.summary ? JSON.stringify(result.summary) : 'done')) } catch (e) {}
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -531,6 +596,97 @@ function ProductModal({ onClose, onCreated, product }) {
           <button className="btn primary" onClick={save} disabled={saving}>
             {saving ? 'Saving…' : (product ? 'Save' : 'Create')}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ImportPreviewModal({ rows, onClose, onImported }) {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [jobId, setJobId] = useState(null)
+  const [progress, setProgress] = useState({ percent: 0, processed: 0, total: rows.length, success: 0, errors: 0, status: null })
+  const pollRef = React.useRef(null)
+
+  async function doImport() {
+    setError(null)
+    setLoading(true)
+    try {
+      const r = await api.post('/products/import-json', { items: rows })
+      if (!r || !r.data || !r.data.jobId) {
+        throw new Error('No jobId returned')
+      }
+      const id = r.data.jobId
+      setJobId(id)
+      // start polling
+      pollRef.current = setInterval(async () => {
+        try {
+          const s = await api.get(`/products/import-status/${id}`)
+          if (s && s.data && s.data.ok) {
+            const d = s.data
+            setProgress({ percent: d.percent || 0, processed: d.processed || 0, total: d.total || rows.length, success: d.success || 0, errors: d.errors || 0, status: d.status })
+            if (d.status && d.status !== 'running') {
+              clearInterval(pollRef.current)
+              pollRef.current = null
+              setLoading(false)
+              // return final job data
+              if (onImported) onImported({ summary: { total: d.total, processed: d.processed, success: d.success, errors: d.errors }, results: d.results, status: d.status })
+            }
+          }
+        } catch (e) {
+          // keep polling; if persistent error, show message
+          console.error('poll error', e)
+        }
+      }, 800)
+    } catch (e) {
+      console.error('Import failed', e)
+      setError((e && e.response && e.response.data && e.response.data.error) || (e && e.message) || 'Import failed')
+      setLoading(false)
+    } finally { setLoading(false) }
+  }
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [])
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal large">
+        <h3>Preview product import ({rows.length} rows)</h3>
+        {error && <div className="error">{error}</div>}
+        <div style={{ maxHeight: 320, overflow: 'auto', border: '1px solid #eee', padding: 8 }}>
+          <table className="products-table" style={{ width: '100%' }}>
+            <thead>
+              <tr><th>#</th><th>SKU</th><th>Name</th><th>MRP</th><th>Price</th><th>Tax%</th><th>Stock</th></tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}><td>{i+1}</td><td>{r.sku}</td><td>{r.name}</td><td>{r.mrp}</td><td>{r.price}</td><td>{r.tax_percent}</td><td>{r.stock}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          {jobId ? (
+            <div>
+              <div style={{ marginBottom: 8 }}>Import progress: {progress.percent}% — {progress.processed}/{progress.total} processed</div>
+              <div style={{ height: 10, background: '#eee', borderRadius: 4 }}>
+                <div style={{ width: `${progress.percent}%`, height: '100%', background: '#06f', borderRadius: 4 }} />
+              </div>
+              <div style={{ marginTop: 8 }}>Succeeded: {progress.success} • Errors: {progress.errors}</div>
+              <div className="actions" style={{ marginTop: 10 }}>
+                <button className="btn cancel" onClick={() => { if (pollRef.current) clearInterval(pollRef.current); onClose && onClose() }} disabled={loading}>Close</button>
+              </div>
+            </div>
+          ) : (
+            <div className="actions">
+              <button className="btn cancel" onClick={onClose} disabled={loading}>Cancel</button>
+              <button className="btn primary" onClick={doImport} disabled={loading}>{loading ? 'Starting…' : 'Import'}</button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -4,6 +4,7 @@ const db = require('../db');
 const v = require('../validators')
 const schemaCache = require('../schemaCache')
 const tx = require('../tx')
+const logger = require('../logger')
 // optionalAuth middleware will populate req.user when a valid Bearer token is present
 
 // POST /api/sales - create a sale with items. Expects { items: [{ product_id, qty, price, tax_percent, sku, name }], payment_method }
@@ -300,6 +301,25 @@ router.post('/', async (req, res) => {
   return { status: 201, json: { id: saleId, loyalty_awarded: awardPoints, loyalty_used: (loyaltyUsed || 0) } }
     }, { route: 'sales.create' })
 
+    // Log sale creation for audit (query the saved sale & items so we have authoritative snapshot)
+    try {
+      const createdId = result && result.json && result.json.id ? Number(result.json.id) : null
+      if (createdId) {
+        try {
+          const sres = await db.query('SELECT id, created_at, subtotal, tax_total, grand_total, payment_method, metadata, store_id FROM sales WHERE id = $1', [createdId])
+          const sit = await db.query('SELECT id, product_id, variant_id, sku, name, qty, price, tax_percent, line_total FROM sale_items WHERE sale_id = $1', [createdId])
+          const saleRow = sres.rows && sres.rows[0] ? sres.rows[0] : null
+          const saleItems = sit.rows || []
+          const newSale = Object.assign({}, saleRow, { items: saleItems })
+          // non-blocking
+          logger.info('Sale created', { action: 'sale.create', module: 'sales', sale: newSale }, saleRow && saleRow.store_id || storeId).catch(()=>{})
+        } catch (inner) {
+          // if querying fails, still attempt to log basic info
+          try { logger.info('Sale created', { action: 'sale.create', module: 'sales', sale_id: createdId }, storeId).catch(()=>{}) } catch (e) {}
+        }
+      }
+    } catch (e) {}
+
     if (result && result.status) {
       return res.status(result.status).json(result.json)
     }
@@ -307,6 +327,87 @@ router.post('/', async (req, res) => {
     res.status(500).json({ error: 'internal error' })
   } catch (err) {
     console.error(err)
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// PUT /api/sales/:id - update sale (metadata, payment_method)
+router.put('/:id', async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' })
+  const { metadata, payment_method } = req.body || {}
+  if (metadata === undefined && payment_method === undefined) return res.status(400).json({ error: 'nothing to update' })
+  try {
+    // load existing sale and items
+    const s = await db.query('SELECT * FROM sales WHERE id = $1', [id])
+    if (s.rows.length === 0) return res.status(404).json({ error: 'not found' })
+    const before = s.rows[0]
+    const itemsRes = await db.query('SELECT * FROM sale_items WHERE sale_id = $1', [id])
+    const beforeItems = itemsRes.rows || []
+
+    // perform update
+    const parts = []
+    const vals = []
+    let idx = 1
+    if (payment_method !== undefined) { parts.push(`payment_method = $${idx++}`); vals.push(payment_method || null) }
+    if (metadata !== undefined) { parts.push(`metadata = $${idx++}`); vals.push(metadata || null) }
+    if (parts.length) {
+      vals.push(id)
+      await db.query(`UPDATE sales SET ${parts.join(', ')} WHERE id = $${vals.length}`, vals)
+    }
+    // reload
+    const afterRes = await db.query('SELECT * FROM sales WHERE id = $1', [id])
+    const after = afterRes.rows[0]
+    const afterItemsRes = await db.query('SELECT * FROM sale_items WHERE sale_id = $1', [id])
+    const afterItems = afterItemsRes.rows || []
+
+    // Log modification with before/after JSON
+    try {
+      const meta = { action: 'sale.update', module: 'sales', sale_id: id, before: { sale: before, items: beforeItems }, after: { sale: after, items: afterItems } }
+      logger.info('Sale updated', meta, req.user && req.user.store_id || null).catch(()=>{})
+    } catch (e) {}
+
+    res.json({ id: after.id })
+  } catch (e) {
+    console.error('Failed to update sale', e)
+    res.status(500).json({ error: 'internal error' })
+  }
+})
+
+// DELETE /api/sales/:id - delete a sale and its items (admin use). Logs before/after.
+router.delete('/:id', async (req, res) => {
+  const id = Number(req.params.id)
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'invalid id' })
+  try {
+    const s = await db.query('SELECT * FROM sales WHERE id = $1', [id])
+    if (s.rows.length === 0) return res.status(404).json({ error: 'not found' })
+    const before = s.rows[0]
+    const itemsRes = await db.query('SELECT * FROM sale_items WHERE sale_id = $1', [id])
+    const beforeItems = itemsRes.rows || []
+
+    // perform delete inside transaction
+    const client = await db.pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('DELETE FROM sale_items WHERE sale_id = $1', [id])
+      await client.query('DELETE FROM sales WHERE id = $1', [id])
+      await client.query('COMMIT')
+    } catch (e) {
+      await client.query('ROLLBACK')
+      throw e
+    } finally {
+      client.release()
+    }
+
+    // Log deletion with before snapshot and after=null
+    try {
+      const meta = { action: 'sale.delete', module: 'sales', sale_id: id, before: { sale: before, items: beforeItems }, after: null }
+      logger.info('Sale deleted', meta, req.user && req.user.store_id || null).catch(()=>{})
+    } catch (e) {}
+
+    res.json({ ok: true })
+  } catch (e) {
+    console.error('Failed to delete sale', e)
     res.status(500).json({ error: 'internal error' })
   }
 })

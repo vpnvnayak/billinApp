@@ -3,6 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const logger = require('../logger')
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 
@@ -96,7 +97,10 @@ router.post('/login', async (req, res) => {
     if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
     const user = result.rows[0];
     const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!ok) {
+      try { logger.warn('Failed login attempt', { email, module: 'auth', event: 'login_failed', ip: req.ip }) } catch (e) {}
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
 
     // fetch roles
     const r = await db.query(
@@ -122,6 +126,11 @@ router.post('/login', async (req, res) => {
   const sameSite = cookieSecure ? 'none' : 'lax'
       res.cookie('refreshToken', refresh, { httpOnly: true, sameSite, secure: cookieSecure, domain: cookieDomain, expires: expiresAt });
       // In development include the refresh token in the response body to aid local dev (not secure)
+      // Log successful login (non-blocking)
+      try {
+        logger.info('User login', { userId: user.id, userEmail: user.email, userName: user.full_name, roles, module: 'auth', event: 'login', ip: req.ip }, store_id)
+      } catch (e) {}
+
       if (NODE_ENV !== 'production') {
         res.json({ token, refreshToken: refresh, user: { id: user.id, email: user.email, full_name: user.full_name, roles, store_id } });
       } else {

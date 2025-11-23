@@ -12,7 +12,23 @@ const tabs = [
   { key: 'logs', label: 'System Logs' }
 ]
 
-export default function Settings() {
+export default function Settings({ user }) {
+  // Build tabs based on role: only show 'logs' to superadmin/storeadmin
+  const allowedTabs = [
+    { key: 'profile', label: 'Profile settings' },
+    { key: 'store', label: 'Store settings' },
+    { key: 'pos', label: 'POS configuration' }
+  ]
+  const roles = (user && user.roles) || []
+  if (Array.isArray(roles) && roles.length > 0 && typeof roles[0] === 'object') {
+    // normalize to names
+    const tmp = roles.map(r => (r && r.name) || String(r))
+    roles.length = 0; roles.push(...tmp)
+  }
+  if (roles.includes('superadmin') || roles.includes('storeadmin')) {
+    allowedTabs.push({ key: 'logs', label: 'System Logs' })
+  }
+
   const [active, setActive] = useState(() => {
     try { const p = window.location.pathname.split('/')[2]; return p || 'profile' } catch (e) { return 'profile' }
   })
@@ -54,7 +70,7 @@ export default function Settings() {
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>Settings</h3>
           <nav>
             <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {tabs.map(t => (
+              {allowedTabs.map(t => (
                 <li key={t.key} style={{ marginBottom: 8 }}>
                   <button onClick={() => go(t.key)} className={`btn-link ${active === t.key ? 'active' : ''}`} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: 8 }}>{t.label}</button>
                 </li>
@@ -83,7 +99,7 @@ export default function Settings() {
           {active === 'profile' && <ProfileSettings />}
           {active === 'store' && <StoreSettings />}
           {active === 'pos' && <POSConfig />}
-          {active === 'logs' && <SystemLogs />}
+          {active === 'logs' && (roles.includes('superadmin') || roles.includes('storeadmin')) ? <SystemLogs /> : null}
         </div>
       </section>
     </div>

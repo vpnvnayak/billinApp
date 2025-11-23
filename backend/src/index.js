@@ -60,7 +60,10 @@ app.use(cors({
 
 // VERY IMPORTANT: respond to preflight quickly
 app.options('*', cors());
-app.use(express.json());
+// Increase default body size limits to allow larger JSON product-import files
+app.use(express.json({ limit: process.env.EXPRESS_JSON_LIMIT || '10mb' }));
+// Also parse URL-encoded bodies (forms) with the same limit
+app.use(express.urlencoded({ extended: true, limit: process.env.EXPRESS_JSON_LIMIT || '10mb' }));
 app.use(cookieParser());
 
 // Simple E2E cleanup endpoint (only enabled when E2E_CLEANUP_TOKEN is set)
@@ -141,6 +144,7 @@ const customersRouter = require('./routes/customers');
 const suppliersRouter = require('./routes/suppliers');
 const supplierAggregatesRouter = require('./routes/supplierAggregates');
 const purchasesRouter = require('./routes/purchases');
+const logsRouter = require('./routes/logs');
 let purchaseParseRouter = null
 try {
 	purchaseParseRouter = require('./routes/purchaseParse');
@@ -163,6 +167,7 @@ app.use('/api/customers', customersRouter);
 app.use('/api/suppliers', suppliersRouter);
 app.use('/api/suppliers/aggregates', supplierAggregatesRouter);
 app.use('/api/purchases', purchasesRouter);
+app.use('/api/logs', logsRouter);
 if (purchaseParseRouter) app.use('/api/purchases/parse', purchaseParseRouter);
 // settings and uploads
 app.use('/api', settingsRouter);

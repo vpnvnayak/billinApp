@@ -255,7 +255,7 @@ export default function App() {
                   {user && Array.isArray(user.roles) && user.roles.includes('cashier') ? <POS /> : <Dashboard />}
                 </section>
               )}
-              {route.startsWith('/settings') && <section className="products"><Settings /></section>}
+              {route.startsWith('/settings') && <section className="products"><Settings user={user} /></section>}
             </main>
           </div>
         </div>
