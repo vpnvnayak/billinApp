@@ -22,6 +22,7 @@ router.get('/', requireAuth, async (req, res) => {
   const level = req.query.level ? String(req.query.level).trim().toLowerCase() : null
   const storeId = req.query.store_id ? Number(req.query.store_id) : null
   const q = req.query.q ? String(req.query.q).trim() : null
+  const actionType = req.query.action_type ? String(req.query.action_type).trim() : null
 
   try {
     const where = []
@@ -38,6 +39,13 @@ router.get('/', requireAuth, async (req, res) => {
     if (q) {
       where.push(`(message ILIKE $${idx} OR meta::text ILIKE $${idx})`)
       params.push(`%${q}%`)
+      idx++
+    }
+    if (actionType) {
+      // allow filtering by normalized action_type column, or by meta.action (including dotted names)
+      // also support matching meta.action with dots converted to underscores
+      where.push(`(action_type = $${idx} OR COALESCE((meta->>'action'), '') = $${idx} OR REPLACE(COALESCE((meta->>'action'), ''), '.', '_') = $${idx})`)
+      params.push(actionType)
       idx++
     }
 

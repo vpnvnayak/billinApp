@@ -11,6 +11,7 @@ export default function SystemLogs() {
   const [level, setLevel] = useState('')
   const [q, setQ] = useState('')
   const [storeId, setStoreId] = useState('')
+  const [actionType, setActionType] = useState('')
   const [selectedLog, setSelectedLog] = useState(null)
 
   useEffect(() => {
@@ -23,6 +24,7 @@ export default function SystemLogs() {
         if (level) params.level = level
         if (q) params.q = q
         if (storeId) params.store_id = storeId
+        if (actionType) params.action_type = actionType
         const r = await api.get('/logs', { params })
         if (!mounted) return
         const data = r.data || {}
@@ -54,7 +56,7 @@ export default function SystemLogs() {
       es.addEventListener('error', () => {})
     } catch (err) {}
     return () => { mounted = false; try { if (es) es.close() } catch (e) {} }
-  }, [page, limit, level, q, storeId])
+  }, [page, limit, level, q, storeId, actionType])
 
   function resetAndReload() {
     setPage(1)
@@ -91,6 +93,16 @@ export default function SystemLogs() {
         </div>
 
         <div style={{ marginLeft: 12, display: 'flex', gap: 8 }}>
+          <select value={actionType} onChange={e => { setActionType(e.target.value); resetAndReload() }} style={{ padding: '8px 10px', borderRadius: 8 }}>
+            <option value="">All actions</option>
+            <option value="sale_create">Sale: Create</option>
+            <option value="sale_update">Sale: Update</option>
+            <option value="sale_delete">Sale: Delete</option>
+            <option value="purchase">Purchase</option>
+            <option value="stock_adjust">Stock Adjust</option>
+            <option value="authentication">Auth</option>
+            <option value="error">Errors</option>
+          </select>
           <select value={level} onChange={e => { setLevel(e.target.value); resetAndReload() }} style={{ padding: '8px 10px', borderRadius: 8 }}>
             <option value="">All levels</option>
             <option value="info">Info</option>
@@ -129,12 +141,14 @@ export default function SystemLogs() {
                   const userName = meta.userName || meta.user || (meta.user_id ? `user ${meta.user_id}` : '—')
                   const avatar = meta.userAvatar || (meta.user && meta.user.avatar) || null
                   // prefer normalized action_type populated by backend; fallback to meta.action/event
-                  const actionLabel = (l.action_type && l.action_type.toString()) || meta.action || meta.event || (l.level || '').toUpperCase()
+                  const rawAction = (l.action_type && l.action_type.toString()) || meta.action || meta.event || (l.level || '').toUpperCase()
+                  // humanize action label: sale_create -> Sale Create
+                  const actionLabel = String(rawAction).replace(/[_\-\.]/g, ' ').replace(/(^|\s)\S/g, s => s.toUpperCase())
                   const moduleName = meta.module || meta.component || meta.source || ''
                   const ip = meta.ip || (meta.request && meta.request.ip) || ''
                   const created = new Date(l.created_at)
                   // badge color mapping by normalized action_type prefixes
-                  const a = (actionLabel || '').toLowerCase()
+                  const a = (String(rawAction || '')).toLowerCase()
                   let badgeColor = '#eef2ff'
                   let badgeTextColor = '#4f46e5'
                   if (a.includes('error') || a.includes('failed')) { badgeColor = '#ffdede'; badgeTextColor = '#c53030' }

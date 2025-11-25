@@ -6,6 +6,13 @@ function classifyLog(message = '', meta = {}) {
   const text = (message || '').toString().toLowerCase()
   const source = `${mAction} ${text}`.trim()
 
+  // If meta.action is specific (like 'sale.create' or 'sale.update'), prefer a normalized action_type
+  if (mAction && mAction.indexOf('.') !== -1) {
+    // normalize by replacing non-alphanum with underscore (sale.create -> sale_create)
+    const norm = mAction.replace(/[^a-z0-9]+/g, '_')
+    return { action_type: norm, severity: 'info' }
+  }
+
   const rules = [
     { rx: /\b(pos|sale|checkout|processed sale|processed pos|sold)\b/, action: 'sale', severity: 'info' },
     { rx: /\b(purchase|received|restock|stock received|purchase order)\b/, action: 'purchase', severity: 'info' },

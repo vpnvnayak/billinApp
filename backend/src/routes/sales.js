@@ -320,8 +320,9 @@ router.post('/', async (req, res) => {
           const logUserName = req.user && (req.user.full_name || req.user.name) ? (req.user.full_name || req.user.name) : null
           const logUserRoles = req.user && req.user.roles ? req.user.roles : null
           const logIp = (req && (req.ip || (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])))) || null
+          const actor = { id: logUserId, email: logUserEmail, name: logUserName, roles: logUserRoles, ip: logIp }
 
-          logger.info(
+          /* logger.info(
             'Sale created',
             {
               action: 'sale.create',
@@ -331,26 +332,29 @@ router.post('/', async (req, res) => {
               items_count: Array.isArray(saleItems) ? saleItems.length : 0,
               grand_total: saleRow ? saleRow.grand_total : undefined,
               payment_method: saleRow ? saleRow.payment_method : undefined,
-              // user/ip context
+              // user/ip context (backwards-compatible flat fields)
               userId: logUserId,
               user_id: logUserId,
               userEmail: logUserEmail,
               userName: logUserName,
               userRoles: logUserRoles,
-              ip: logIp
+              ip: logIp,
+              // structured actor info
+              actor
             },
             saleRow && saleRow.store_id || storeId
-          ).catch(()=>{})
+          ).catch(()=>{}) */
         } catch (inner) {
           // if querying fails, still attempt to log basic info
           try {
-            try {
+              try {
               const logUserId2 = req.user && (req.user.sub || req.user.userId || req.user.id) ? (req.user.sub || req.user.userId || req.user.id) : null
               const logUserEmail2 = req.user && req.user.email ? req.user.email : null
               const logUserName2 = req.user && (req.user.full_name || req.user.name) ? (req.user.full_name || req.user.name) : null
               const logUserRoles2 = req.user && req.user.roles ? req.user.roles : null
               const logIp2 = (req && (req.ip || (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])))) || null
-              logger.info('Sale created', {
+              const actor2 = { id: logUserId2, email: logUserEmail2, name: logUserName2, roles: logUserRoles2, ip: logIp2 }
+              /* logger.info('Sale created', {
                 action: 'sale.create',
                 module: 'sales',
                 sale_id: createdId,
@@ -360,8 +364,9 @@ router.post('/', async (req, res) => {
                 userEmail: logUserEmail2,
                 userName: logUserName2,
                 userRoles: logUserRoles2,
-                ip: logIp2
-              }, storeId).catch(()=>{})
+                ip: logIp2,
+                actor: actor2
+              }, storeId).catch(()=>{}) */
             } catch (e) {}
           } catch (e) {}
         }
@@ -405,7 +410,13 @@ router.put('/:id', async (req, res) => {
       const itemsRes = await db.query('SELECT * FROM sale_items WHERE sale_id = $1', [id])
       const afterItems = itemsRes.rows || []
       try {
-        const metaLog = { action: 'sale.update', module: 'sales', sale_id: id, before: { sale: s.rows[0] }, after: { sale: after, items: afterItems } }
+        const logUserId = req.user && (req.user.sub || req.user.userId || req.user.id) ? (req.user.sub || req.user.userId || req.user.id) : null
+        const logUserEmail = req.user && req.user.email ? req.user.email : null
+        const logUserName = req.user && (req.user.full_name || req.user.name) ? (req.user.full_name || req.user.name) : null
+        const logUserRoles = req.user && req.user.roles ? req.user.roles : null
+        const logIp = (req && (req.ip || (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])))) || null
+        const actor = { id: logUserId, email: logUserEmail, name: logUserName, roles: logUserRoles, ip: logIp }
+        const metaLog = { action: 'sale.update', module: 'sales', sale_id: id, before: { sale: s.rows[0] }, after: { sale: after, items: afterItems }, actor, userId: logUserId, userEmail: logUserEmail, userName: logUserName }
         logger.info('Sale updated', metaLog, req.user && req.user.store_id || null).catch(()=>{})
       } catch (e) {}
       return res.json({ id: after.id })
@@ -667,7 +678,13 @@ router.put('/:id', async (req, res) => {
         const sit = await db.query('SELECT id, product_id, variant_id, sku, name, qty, price, tax_percent, line_total FROM sale_items WHERE sale_id = $1', [id])
         const saleRow = sres.rows && sres.rows[0] ? sres.rows[0] : null
         const saleItems = sit.rows || []
-        const meta = { action: 'sale.update', module: 'sales', sale_id: id, after: { sale: saleRow, items: saleItems } }
+        const logUserId = req.user && (req.user.sub || req.user.userId || req.user.id) ? (req.user.sub || req.user.userId || req.user.id) : null
+        const logUserEmail = req.user && req.user.email ? req.user.email : null
+        const logUserName = req.user && (req.user.full_name || req.user.name) ? (req.user.full_name || req.user.name) : null
+        const logUserRoles = req.user && req.user.roles ? req.user.roles : null
+        const logIp = (req && (req.ip || (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])))) || null
+        const actor = { id: logUserId, email: logUserEmail, name: logUserName, roles: logUserRoles, ip: logIp }
+        const meta = { action: 'sale.update', module: 'sales', sale_id: id, after: { sale: saleRow, items: saleItems }, actor, userId: logUserId, userEmail: logUserEmail, userName: logUserName }
         logger.info('Sale updated', meta, saleRow && saleRow.store_id || null).catch(()=>{})
       } catch (e) { console.error('Failed logging sale update', e) }
       return res.status(result.status).json(result.json)
@@ -706,7 +723,13 @@ router.delete('/:id', async (req, res) => {
 
     // Log deletion with before snapshot and after=null
     try {
-      const meta = { action: 'sale.delete', module: 'sales', sale_id: id, before: { sale: before, items: beforeItems }, after: null }
+      const logUserId = req.user && (req.user.sub || req.user.userId || req.user.id) ? (req.user.sub || req.user.userId || req.user.id) : null
+      const logUserEmail = req.user && req.user.email ? req.user.email : null
+      const logUserName = req.user && (req.user.full_name || req.user.name) ? (req.user.full_name || req.user.name) : null
+      const logUserRoles = req.user && req.user.roles ? req.user.roles : null
+      const logIp = (req && (req.ip || (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])))) || null
+      const actor = { id: logUserId, email: logUserEmail, name: logUserName, roles: logUserRoles, ip: logIp }
+      const meta = { action: 'sale.delete', module: 'sales', sale_id: id, before: { sale: before, items: beforeItems }, after: null, actor, userId: logUserId, userEmail: logUserEmail, userName: logUserName }
       logger.info('Sale deleted', meta, req.user && req.user.store_id || null).catch(()=>{})
     } catch (e) {}
 
