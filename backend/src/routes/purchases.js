@@ -4,6 +4,7 @@ const db = require('../db')
 const v = require('../validators')
 const schemaCache = require('../schemaCache')
 const tx = require('../tx')
+const logger = require('../logger')
 
 // Factory that returns an insertItem helper bound to a transaction client.
 // This avoids duplicate definitions and scoping issues between create/update flows.
@@ -301,6 +302,25 @@ router.post('/', async (req, res) => {
     }, { route: 'purchases.create' })
 
     if (result && result.status) {
+      // Log purchase creation for audit (non-blocking)
+      try {
+        const createdId = result && result.json && result.json.id ? Number(result.json.id) : null
+        if (createdId) {
+          try {
+            const pres = await db.query('SELECT id, created_at, supplier_id, total_amount, metadata, store_id FROM purchases WHERE id = $1', [createdId])
+            const pit = await db.query('SELECT id, product_id, variant_id, sku, name, qty, price, line_total FROM purchase_items WHERE purchase_id = $1', [createdId])
+            const purchaseRow = pres.rows && pres.rows[0] ? pres.rows[0] : null
+            const purchaseItems = pit.rows || []
+            const logUserId = req.user && (req.user.sub || req.user.userId || req.user.id) ? (req.user.sub || req.user.userId || req.user.id) : null
+            const logUserEmail = req.user && req.user.email ? req.user.email : null
+            const logUserName = req.user && (req.user.full_name || req.user.name) ? (req.user.full_name || req.user.name) : null
+            const logUserRoles = req.user && req.user.roles ? req.user.roles : null
+            const logIp = (req && (req.ip || (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])))) || null
+            const actor = { id: logUserId, email: logUserEmail, name: logUserName, roles: logUserRoles, ip: logIp }
+            logger.info('Purchase created', { action: 'purchase.create', module: 'purchases', purchase: purchaseRow, items: purchaseItems, items_count: Array.isArray(purchaseItems) ? purchaseItems.length : 0, total_amount: purchaseRow ? purchaseRow.total_amount : undefined, supplier_id: purchaseRow ? purchaseRow.supplier_id : undefined, userId: logUserId, user_id: logUserId, userEmail: logUserEmail, userName: logUserName, userRoles: logUserRoles, ip: logIp, actor }, purchaseRow && purchaseRow.store_id || storeId).catch(()=>{})
+          } catch (inner) {}
+        }
+      } catch (e) {}
       return res.status(result.status).json(result.json)
     }
     res.status(500).json({ error: 'internal error' })
@@ -505,7 +525,29 @@ router.put('/:id', async (req, res) => {
       return { status: 200, json: { id: Number(id) } }
     }, { route: 'purchases.update' })
 
-    if (result && result.status) return res.status(result.status).json(result.json)
+    if (result && result.status) {
+      // Log purchase update with after snapshot
+      try {
+        const updId = result && result.json && result.json.id ? Number(result.json.id) : null
+        if (updId) {
+          try {
+            const pres = await db.query('SELECT id, created_at, supplier_id, total_amount, metadata, store_id FROM purchases WHERE id = $1', [updId])
+            const pit = await db.query('SELECT id, product_id, variant_id, sku, name, qty, price, line_total FROM purchase_items WHERE purchase_id = $1', [updId])
+            const purchaseRow = pres.rows && pres.rows[0] ? pres.rows[0] : null
+            const purchaseItems = pit.rows || []
+            const logUserId = req.user && (req.user.sub || req.user.userId || req.user.id) ? (req.user.sub || req.user.userId || req.user.id) : null
+            const logUserEmail = req.user && req.user.email ? req.user.email : null
+            const logUserName = req.user && (req.user.full_name || req.user.name) ? (req.user.full_name || req.user.name) : null
+            const logUserRoles = req.user && req.user.roles ? req.user.roles : null
+            const logIp = (req && (req.ip || (req.headers && (req.headers['x-forwarded-for'] || req.headers['x-real-ip'])))) || null
+            const actor = { id: logUserId, email: logUserEmail, name: logUserName, roles: logUserRoles, ip: logIp }
+            const meta = { action: 'purchase.update', module: 'purchases', purchase_id: updId, after: { purchase: purchaseRow, items: purchaseItems }, actor, userId: logUserId, userEmail: logUserEmail, userName: logUserName }
+            logger.info('Purchase updated', meta, purchaseRow && purchaseRow.store_id || storeId).catch(()=>{})
+          } catch (inner) {}
+        }
+      } catch (e) {}
+      return res.status(result.status).json(result.json)
+    }
     return res.status(500).json({ error: 'internal error' })
   } catch (err) {
     console.error('Failed to update purchase', err)
