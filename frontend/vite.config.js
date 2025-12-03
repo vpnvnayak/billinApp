@@ -11,8 +11,9 @@ export default defineConfig(({ command, mode }) => ({
   plugins: [react()],
   server: {
     https: fs.existsSync(certFile) && fs.existsSync(keyFile) ? {
-      cert: fs.readFileSync(certFile),  
-      key: fs.readFileSync(keyFile),
+      cert: fs.readFileSync(certFile),
+      key: fs.readFileSync(keyFile), 
+      allowedHosts: true
     } : false,
     host: 'localhost',
     port: process.env.PORT || 5173,
