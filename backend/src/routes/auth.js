@@ -122,7 +122,7 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
       // create a refresh token, store it with expiry, and set as HttpOnly cookie
       const refresh = crypto.randomBytes(48).toString('hex');
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
+      const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000); // 8 hours
       await db.query('INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)', [refresh, user.id, expiresAt]);
   // set cookie (HttpOnly)
   // choose secure when connection is TLS or COOKIE_SECURE env is set
@@ -245,7 +245,7 @@ router.post('/refresh', async (req, res) => {
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
     // rotate refresh token: delete old, insert new
     const newRefresh = crypto.randomBytes(48).toString('hex');
-    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
     await tx.runTransaction(async (client) => {
       await client.query('DELETE FROM refresh_tokens WHERE id = $1', [row.id]);
       await client.query('INSERT INTO refresh_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)', [newRefresh, userId, expiresAt]);

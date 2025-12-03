@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import api from '../services/api'
-import { PlusIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline'
+import { PlusIcon, MagnifyingGlassIcon, PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
 import ListControls from './ui/ListControls'
 import PaginationFooter from './ui/PaginationFooter'
 
@@ -349,10 +349,17 @@ export default function Products() {
                         {p.is_repacking ? <span className="badge-repack">Yes</span> : ''}
                       </td>
                       <td>
-                        <button className="btn small" onClick={() => setEditing(p)}>Edit</button>
                         <button
-                          className="btn small btn-danger"
-                          style={{ marginLeft: 8 }}
+                          className="btn small"
+                          onClick={() => setEditing(p)}
+                          title="Edit product"
+                          style={{ padding: '6px 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                        >
+                          <PencilIcon style={{ width: 16, height: 16 }} />
+                        </button>
+                        <button
+                          className="btn small"
+                          style={{ marginLeft: 8, padding: '6px 8px', background: '#dc3545', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                           onClick={async () => {
                             try {
                               const ok = window.confirm(`Delete product "${p.name}" (ID ${p.id})? This cannot be undone.`)
@@ -369,8 +376,9 @@ export default function Products() {
                               try { import('../services/ui').then(m => m.showAlert((err && err.response && err.response.data && err.response.data.error) || 'Failed to delete product')) } catch (e) {}
                             }
                           }}
+                          title="Delete product"
                         >
-                          Delete
+                          <TrashIcon style={{ width: 16, height: 16 }} />
                         </button>
                       </td>
                     </tr>
@@ -402,8 +410,10 @@ export default function Products() {
                                 barcode: v.barcode
                               }))
                             }
+                            title="Edit variant"
+                            style={{ padding: '6px 8px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
                           >
-                            Edit
+                            <PencilIcon style={{ width: 16, height: 16 }} />
                           </button>
                         </td>
                       </tr>
