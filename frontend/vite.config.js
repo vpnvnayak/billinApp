@@ -17,6 +17,13 @@ export default defineConfig(({ command, mode }) => ({
     host: 'localhost',
     port: process.env.PORT || 5173,
     // fail if 5173 is busy — we want the dev server to run on 5173 only
-    strictPort: true
+    strictPort: true,
+    // allowlist additional hosts used by previews / deploy targets
+    // Add the Render host that reported being blocked so HMR/previews work there
+    allowedHosts: [
+      'frontend-5ocj.onrender.com',
+      'localhost',
+      '127.0.0.1'
+    ]
   }
 }))

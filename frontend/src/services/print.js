@@ -1,17 +1,30 @@
 // Shared print helpers - single consolidated implementation.
 import api from './api'
 
-let storeSettingsCache = null
+// cache store settings per-store (keyed by store id or 'global')
+let storeSettingsCache = {}
 
-async function loadStoreSettings() {
-  if (storeSettingsCache) return storeSettingsCache
+// load store settings; accepts optional storeId and optional forceReload flag
+async function loadStoreSettings(storeId = null, force = false) {
+  const key = storeId ? `store_${storeId}` : 'global'
+  if (!force && storeSettingsCache && Object.prototype.hasOwnProperty.call(storeSettingsCache, key)) {
+    return storeSettingsCache[key]
+  }
   try {
-    const resp = await api.get('/settings').catch(() => null)
-    if (resp && resp.data) storeSettingsCache = resp.data
+    const url = storeId ? `/settings?store_id=${encodeURIComponent(storeId)}` : '/settings'
+    const resp = await api.get(url).catch(() => null)
+    const data = (resp && resp.data) ? resp.data : {}
+    storeSettingsCache[key] = data
+    return data
   } catch (e) {
     console.error('failed to load store settings', e)
+    return storeSettingsCache[key] || {}
   }
-  return storeSettingsCache
+}
+
+export function clearStoreSettingsCache(storeId = null) {
+  const key = storeId ? `store_${storeId}` : 'global'
+  try { delete storeSettingsCache[key] } catch (e) { storeSettingsCache = {} }
 }
 
 function fmtINR(v, opts = {}) {
@@ -67,7 +80,18 @@ export function buildThermalHtml(sale = {}, store = {}, payment_breakdown = {}, 
   const loyaltyAwarded = (sale.metadata && (sale.metadata.loyalty_awarded || sale.metadata.loyalty_awarded === 0)) ? sale.metadata.loyalty_awarded : (sale.loyalty_awarded || 0)
   const previousCredit = (sale.metadata && (sale.metadata.previous_credit || sale.metadata.previous_credit === 0)) ? Number(sale.metadata.previous_credit || 0) : (Number(sale.previous_credit || 0) || 0)
 
-  const headerHtml = `<div class="center b" style="font-size:14px">${(merged.name || '').replace(/\n/g, '<br/>')}</div><div class="center small">${(merged.address || '').replace(/\n/g, '<br/>')}</div><div class="center small">${merged.contact ? ('Ph: ' + merged.contact) : ''}${merged.gst ? ('<br/>' + merged.gst) : ''}</div>`
+  // Format GSTIN: prefix with label unless value already contains a GST label
+  let gstHtml = ''
+  try {
+    if (merged && merged.gst) {
+      const raw = String(merged.gst).trim()
+      // if value already contains GST or GSTIN label (case-insensitive), reuse as-is
+      if (/\bGST(?:IN)?\b[:\s]/i.test(raw) || /GSTIN/i.test(raw)) gstHtml = `<br/>${raw}`
+      else gstHtml = `<br/>GSTIN: ${raw}`
+    }
+  } catch (e) { gstHtml = '' }
+
+  const headerHtml = `<div class="center b" style="font-size:14px">${(merged.name || '').replace(/\n/g, '<br/>')}</div><div class="center small">${(merged.address || '').replace(/\n/g, '<br/>')}</div><div class="center small">${merged.contact ? ('Ph: ' + merged.contact) : ''}${gstHtml}</div>`
 
   // small invoice meta to show on compact/branded receipts
   // Invoice meta: left = invoice no, right = date/time on same line
@@ -248,7 +272,18 @@ export function printThermal(saleOrPayload, itemsOrPb, maybePb) {
         pb = pb || saleOrPayload.payment_breakdown || saleOrPayload.metadata || {}
       }
 
-      const store = await loadStoreSettings()
+      // attempt to load store-specific settings for this sale when possible
+      // Derive store id from sale: allow numeric id in sale.store_id, sale.storeId,
+      // or sale.store may be an object with an `id` property.
+      let saleStoreId = null
+      if (sale) {
+        if (sale.store_id) saleStoreId = sale.store_id
+        else if (sale.storeId) saleStoreId = sale.storeId
+        else if (sale.store && typeof sale.store === 'object' && (sale.store.id || sale.store.id === 0)) saleStoreId = sale.store.id
+        else if (sale.store && (typeof sale.store === 'number' || typeof sale.store === 'string')) saleStoreId = sale.store
+      }
+      if (saleStoreId !== null) saleStoreId = Number(saleStoreId)
+      const store = await loadStoreSettings(saleStoreId)
       const html = buildThermalHtml(sale, store, pb, items)
       const w = window.open('', '_blank', 'width=400,height=600')
       if (!w) throw new Error('Popup blocked')

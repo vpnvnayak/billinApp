@@ -66,6 +66,10 @@ async function readSettingsFromDB(storeId = null) {
         out[k] = row[k]
       }
     }
+    // Normalize gst field: some places use `gst_id`, frontend expects `gst` key for receipts
+    if (!out.gst && Object.prototype.hasOwnProperty.call(row, 'gst_id') && row.gst_id) {
+      out.gst = row.gst_id
+    }
     // business hours removed, nothing to parse
     return out
   } catch (e) {
@@ -294,8 +298,11 @@ async function writeSettings(obj) {
 
 // GET /api/settings
 router.get('/settings', async (req, res) => {
-  // if authenticated and scoped to a store, read settings for that store
-  const storeId = req.user && req.user.store_id ? req.user.store_id : null
+  // allow optional query param ?store_id= to request specific store settings
+  // fallback: if authenticated and scoped to a store, read settings for that store
+  const queryStoreId = req.query && req.query.store_id ? Number(req.query.store_id) : null
+  const authStoreId = req.user && req.user.store_id ? req.user.store_id : null
+  const storeId = queryStoreId || authStoreId || null
   const s = db ? (await readSettingsFromDB(storeId)) : await readSettings()
   if (!s) return res.json({})
   res.json(s)
