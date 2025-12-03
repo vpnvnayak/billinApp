@@ -14,6 +14,12 @@ export default defineConfig(({ command }) => {
     plugins: [react()],
     server: {
       host: '0.0.0.0', // 👈 important for Render
+      // allowlist hosts for HMR / dev server access from external preview domains
+      allowedHosts: [
+        'frontend-5ocj.onrender.com',
+        'localhost',
+        '127.0.0.1'
+      ],
       port: parseInt(process.env.PORT) || 5173,
       https:
         isDev && fs.existsSync(certFile) && fs.existsSync(keyFile)
@@ -26,6 +32,11 @@ export default defineConfig(({ command }) => {
     },
     preview: {
       host: '0.0.0.0', // 👈 also needed if using `vite preview` on Render
+      allowedHosts: [
+        'frontend-5ocj.onrender.com',
+        'localhost',
+        '127.0.0.1'
+      ],
       port: parseInt(process.env.PORT) || 5173,
     },
   }
