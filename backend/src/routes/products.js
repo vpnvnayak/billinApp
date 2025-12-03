@@ -817,6 +817,45 @@ router.delete('/:id', async (req, res) => {
   try {
     if (!process.env.DATABASE_URL) return res.status(404).json({ error: 'Not found' })
     const storeId = req.user && req.user.store_id ? req.user.store_id : null
+    // Refuse deletion if this product is referenced in sale_items or purchase_items
+    // When scoped to a store, filter dependent rows by the store via joining sales/purchases
+    let saleCount = 0
+    let purchaseCount = 0
+    try {
+      if (storeId) {
+        const sres = await db.query(
+          `SELECT COUNT(*)::int AS cnt FROM sale_items si JOIN sales s ON si.sale_id = s.id WHERE si.product_id = $1 AND s.store_id = $2`,
+          [id, storeId]
+        )
+        saleCount = (sres && sres.rows && sres.rows[0]) ? Number(sres.rows[0].cnt || 0) : 0
+
+        const pres = await db.query(
+          `SELECT COUNT(*)::int AS cnt FROM purchase_items pi JOIN purchases p ON pi.purchase_id = p.id WHERE pi.product_id = $1 AND p.store_id = $2`,
+          [id, storeId]
+        )
+        purchaseCount = (pres && pres.rows && pres.rows[0]) ? Number(pres.rows[0].cnt || 0) : 0
+      } else {
+        const sres = await db.query('SELECT COUNT(*)::int AS cnt FROM sale_items WHERE product_id = $1', [id])
+        saleCount = (sres && sres.rows && sres.rows[0]) ? Number(sres.rows[0].cnt || 0) : 0
+        const pres = await db.query('SELECT COUNT(*)::int AS cnt FROM purchase_items WHERE product_id = $1', [id])
+        purchaseCount = (pres && pres.rows && pres.rows[0]) ? Number(pres.rows[0].cnt || 0) : 0
+      }
+    } catch (e) {
+      // If the sale_items / purchase_items tables do not exist or query fails, log and continue to attempt delete
+      // (keeps behavior tolerant for older schemas)
+      console.warn('dependency check skipped or failed', e && e.message ? e.message : e)
+      saleCount = 0
+      purchaseCount = 0
+    }
+
+    if (saleCount > 0 || purchaseCount > 0) {
+      const parts = []
+      if (saleCount > 0) parts.push(`${saleCount} sale item${saleCount === 1 ? '' : 's'}`)
+      if (purchaseCount > 0) parts.push(`${purchaseCount} purchase item${purchaseCount === 1 ? '' : 's'}`)
+      const msg = `Cannot delete product: referenced by ${parts.join(' and ')}. Remove or reassign those records first.`
+      return res.status(409).json({ error: msg, details: { sale_items: saleCount, purchase_items: purchaseCount } })
+    }
+
     let result
     if (storeId) {
       result = await db.query('DELETE FROM products WHERE id = $1 AND store_id = $2 RETURNING id', [id, storeId])

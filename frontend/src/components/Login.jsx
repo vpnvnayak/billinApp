@@ -2,10 +2,9 @@ import React, { useState } from 'react'
 import api from '../services/api'
 import { setToken } from '../services/localStore'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
-import { isValidEmail } from '../utils/validation'
 
 export default function Login({ onLogin }) {
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
   const [remember, setRemember] = useState(false)
@@ -14,12 +13,12 @@ export default function Login({ onLogin }) {
   async function submit(e) {
     e.preventDefault()
     setError(null)
-    if (!isValidEmail(email)) {
-      setError('Invalid email')
+    if (!username || username.trim().length === 0) {
+      setError('Username is required')
       return
     }
     try {
-      const res = await api.post('/auth/login', { email, password })
+      const res = await api.post('/auth/login', { username, password })
       const { token, user } = res.data
       // server sets refresh token cookie (HttpOnly)
       setToken(token)
@@ -49,10 +48,10 @@ export default function Login({ onLogin }) {
           <label className="field">
             <span className="field-label">Email</span>
             <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              type="text"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              placeholder="your username"
               required
               aria-required="true"
             />

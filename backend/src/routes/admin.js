@@ -178,3 +178,4 @@ router.post('/stores/switch', requireAuth, async (req, res) => {
     res.status(500).json({ error: 'internal error' })
   }
 })
+

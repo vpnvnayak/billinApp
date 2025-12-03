@@ -152,16 +152,20 @@ export default function Products() {
                 // store_seq,product_store_seq_padded6,NAME_UPPER,3,MRP
                 const lines = []
                 for (const r of exportRows) {
-                  const storeId = r.store_seq != null ? String(r.store_seq) : ''
-                  // use internal product id (store-wise) padded to 6 chars as the second field
+                  // First field: raw SKU or barcode without padding (fallback to store_seq when missing)
+                  const rawId = (r.sku || r.barcode) ? String(r.sku || r.barcode).replace(/[\n\r,]+/g, ' ').trim() : (r.store_seq != null ? String(r.store_seq) : '')
+                  // Use SKU or barcode for the padded second field when available; otherwise padded store_seq
                   const storeSeqStr = r.store_seq != null ? String(r.store_seq) : ''
                   const storeSeqPadded = storeSeqStr ? storeSeqStr.padStart(6, '0') : ''.padStart(6, '0')
+                  const idCandidate = (r.sku || r.barcode) ? String(r.sku || r.barcode).trim() : storeSeqPadded
+                  const idSanitized = String(idCandidate).replace(/[\n\r,]+/g, ' ').trim()
+                  const idField = idSanitized.padStart(6, '0')
                   // sanitize name: remove commas/newlines and uppercase
                   const name = String(r.name || '').replace(/[\n\r,]+/g, ' ').trim().toUpperCase()
                   const mrp = (r.mrp == null || r.mrp === '') ? 0 : Number(r.mrp)
                   const mrpFmt = Number.isFinite(mrp) ? mrp.toFixed(2) : '0.00'
                   // constant '3' as the fourth field per spec
-                  const rowLine = `${storeId},${storeSeqPadded},${name},3,${mrpFmt}`
+                  const rowLine = `${rawId},${idField},${name},3,${mrpFmt}`
                   lines.push(rowLine)
                 }
                 const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8;' })
@@ -346,6 +350,28 @@ export default function Products() {
                       </td>
                       <td>
                         <button className="btn small" onClick={() => setEditing(p)}>Edit</button>
+                        <button
+                          className="btn small btn-danger"
+                          style={{ marginLeft: 8 }}
+                          onClick={async () => {
+                            try {
+                              const ok = window.confirm(`Delete product "${p.name}" (ID ${p.id})? This cannot be undone.`)
+                              if (!ok) return
+                              await api.delete(`/products/${p.id}`)
+                              // remove from local list
+                              setProducts(ps => (ps || []).filter(x => x.id !== p.id))
+                              // collapse variants and clear editing if needed
+                              setExpanded(es => { const n = { ...(es || {}) }; delete n[p.id]; return n })
+                              if (editing && editing.id === p.id) setEditing(null)
+                              try { import('../services/ui').then(m => m.showSnackbar('Product deleted', 'success')) } catch (e) {}
+                            } catch (err) {
+                              console.error('Delete failed', err)
+                              try { import('../services/ui').then(m => m.showAlert((err && err.response && err.response.data && err.response.data.error) || 'Failed to delete product')) } catch (e) {}
+                            }
+                          }}
+                        >
+                          Delete
+                        </button>
                       </td>
                     </tr>
                     {expanded[p.id] && (variantsMap[p.id] || []).map((v) => (

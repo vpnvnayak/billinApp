@@ -15,6 +15,9 @@ import Purchases from './components/Purchases'
 import PurchaseDetail from './components/PurchaseDetail'
 import Settings from './components/settings/Settings'
 import Reports from './components/Reports'
+import Discounts from './components/marketing/Discounts'
+import Posters from './components/marketing/Posters'
+import Whatsapp from './components/marketing/Whatsapp'
 import RegisterStore from './components/RegisterStore'
 import { registerPrintHandlers } from './services/print'
 import UIProvider from './components/ui/UIProvider'
@@ -106,6 +109,8 @@ export default function App() {
     }
     return () => { window.removeEventListener('popstate', onPop); window.removeEventListener('pageshow', onPageShow); window.removeEventListener('navigate', onNavigate) }
   }, [])
+
+  // (removed) delegated global submenu toggle — submenu is handled inside `SideNav` now
 
   useEffect(() => {
     api.get('/products').then(r => setProducts(r.data)).catch(console.error)
@@ -230,6 +235,7 @@ export default function App() {
                       '/profile': 'Profile'
                     }
                     if (route && route.startsWith('/settings')) return 'Settings'
+                    if (route && route.startsWith('/marketing')) return 'Marketing'
                     return map[route] || route.replace('/', '') || 'Dashboard'
                   })()}</h1>
                   {store && store.name ? <div style={{ fontSize: 12, color: 'var(--color-muted)', marginTop: 4 }}>{store.name}</div> : null}
@@ -262,6 +268,10 @@ export default function App() {
                 return <section className="products"><POS editSaleId={id} /></section>
               })()}
               {route === '/reports' && <section className="products"><Reports /></section>}
+              {route === '/marketing' && <section className="products"><Discounts /></section>}
+              {route === '/marketing/discounts' && <section className="products"><Discounts /></section>}
+              {route === '/marketing/posters' && <section className="products"><Posters /></section>}
+              {route === '/marketing/whatsapp' && <section className="products"><Whatsapp /></section>}
               {route === '/users' && <section className="products"><AdminUsers user={user} /></section>}
               {route === '/' && (
                 <section className="dashboard">

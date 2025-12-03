@@ -155,6 +155,8 @@ try {
 const settingsRouter = require('./routes/settings')
 const registerRouter = require('./routes/register')
 const reportsRouter = require('./routes/reports')
+const marketingPostersRouter = require('./routes/marketing/posters')
+const marketingDiscountsRouter = require('./routes/marketing/discounts')
 
 app.use('/api/auth', authRouter);
 app.use('/api/products', productsRouter);
@@ -173,6 +175,8 @@ if (purchaseParseRouter) app.use('/api/purchases/parse', purchaseParseRouter);
 app.use('/api', settingsRouter);
 app.use('/api/stores', registerRouter);
 app.use('/api/reports', reportsRouter);
+app.use('/api/marketing', marketingPostersRouter);
+app.use('/api/marketing', marketingDiscountsRouter);
 // legacy stores registration route removed; registration handled via users/store flow
 // serve uploaded assets
 app.use('/uploads', express.static(path.join(__dirname, '..', 'public', 'uploads')))

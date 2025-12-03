@@ -90,10 +90,16 @@ router.post('/register', async (req, res) => {
 // Login
 const NODE_ENV = process.env.NODE_ENV || 'development'
 router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'email and password required' });
+  // Accept either `username` or `email` for backward compatibility; prefer `username` when present
+  const { username, email, password } = req.body || {};
+  if ((!(username || email)) || !password) return res.status(400).json({ error: 'username (or email) and password required' });
   try {
-    const result = await db.query('SELECT id, email, password_hash, full_name FROM users WHERE email = $1', [email]);
+    let result
+    if (username) {
+      result = await db.query('SELECT id, username, email, password_hash, full_name FROM users WHERE username = $1', [username]);
+    } else {
+      result = await db.query('SELECT id, username, email, password_hash, full_name FROM users WHERE email = $1', [email]);
+    }
     if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
     const user = result.rows[0];
     const ok = await bcrypt.compare(password, user.password_hash);
@@ -112,7 +118,7 @@ router.post('/login', async (req, res) => {
   const storeRow = await db.query('SELECT store_id FROM users WHERE id = $1', [user.id]);
   const store_id = (storeRow.rows[0] && storeRow.rows[0].store_id) || null
 
-  const payload = { sub: user.id, email: user.email, full_name: user.full_name || null, roles, store_id };
+  const payload = { sub: user.id, email: user.email || null, username: user.username || null, full_name: user.full_name || null, roles, store_id };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
       // create a refresh token, store it with expiry, and set as HttpOnly cookie
       const refresh = crypto.randomBytes(48).toString('hex');
@@ -131,10 +137,11 @@ router.post('/login', async (req, res) => {
         logger.info('User login', { userId: user.id, userEmail: user.email, userName: user.full_name, roles, module: 'auth', event: 'login', ip: req.ip }, store_id)
       } catch (e) {}
 
+      const userOut = { id: user.id, email: user.email || null, username: user.username || null, full_name: user.full_name || null, roles, store_id }
       if (NODE_ENV !== 'production') {
-        res.json({ token, refreshToken: refresh, user: { id: user.id, email: user.email, full_name: user.full_name, roles, store_id } });
+        res.json({ token, refreshToken: refresh, user: userOut });
       } else {
-        res.json({ token, user: { id: user.id, email: user.email, full_name: user.full_name, roles, store_id } });
+        res.json({ token, user: userOut });
       }
   } catch (err) {
     console.error(err);
@@ -146,7 +153,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   try {
     const userId = req.user.sub;
-  const result = await db.query('SELECT id, email, full_name, phone, store_id FROM users WHERE id = $1', [userId]);
+  const result = await db.query('SELECT id, username, email, full_name, phone, store_id FROM users WHERE id = $1', [userId]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not found' });
     const user = result.rows[0];
     const r = await db.query(
@@ -154,7 +161,7 @@ router.get('/me', requireAuth, async (req, res) => {
       [user.id]
     );
     const roles = r.rows.map(x => x.name);
-  res.json({ id: user.id, email: user.email, full_name: user.full_name, phone: user.phone, roles, store_id: user.store_id });
+  res.json({ id: user.id, username: user.username || null, email: user.email, full_name: user.full_name, phone: user.phone, roles, store_id: user.store_id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -228,13 +235,13 @@ router.post('/refresh', async (req, res) => {
       return res.status(401).json({ error: 'Refresh token expired' });
     }
     const userId = row.user_id;
-    const u = await db.query('SELECT id, email FROM users WHERE id = $1', [userId]);
+    const u = await db.query('SELECT id, username, email FROM users WHERE id = $1', [userId]);
     if (u.rows.length === 0) return res.status(401).json({ error: 'Invalid refresh token' });
   const rolesRes = await db.query('SELECT r.name FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1', [userId]);
   const roles = rolesRes.rows.map(x => x.name);
   const storeRes = await db.query('SELECT store_id FROM users WHERE id = $1', [userId])
   const store_id = (storeRes.rows[0] && storeRes.rows[0].store_id) || null
-  const payload = { sub: userId, email: u.rows[0].email, roles, store_id };
+  const payload = { sub: userId, email: u.rows[0].email || null, username: u.rows[0].username || null, roles, store_id };
     const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '8h' });
     // rotate refresh token: delete old, insert new
     const newRefresh = crypto.randomBytes(48).toString('hex');
