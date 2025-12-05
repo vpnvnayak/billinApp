@@ -259,6 +259,9 @@ router.post('/', async (req, res) => {
           if (hasMrpCol) { cols.push('mrp'); vals.push(mrpVal.toFixed(2)) }
           // include store_id column when it exists; insert NULL if storeId is not set
           if (saleItemsHasStore) { cols.push('store_id'); vals.push(storeId || null) }
+          // include is_discounted flag if provided
+          const hasIsDiscounted = schemaCache.hasColumn('sale_items', 'is_discounted')
+          if (hasIsDiscounted) { cols.push('is_discounted'); vals.push(!!it.is_discounted) }
 
           const placeholders = vals.map((_, i) => `$${i+1}`).join(',')
           const sql = `INSERT INTO sale_items (${cols.join(',')}) VALUES (${placeholders})`
@@ -611,6 +614,9 @@ router.put('/:id', async (req, res) => {
           cols.push('line_total'); vals.push(line_total.toFixed(2))
           if (hasMrpCol) { cols.push('mrp'); vals.push(mrpVal.toFixed(2)) }
           if (saleItemsHasStore) { cols.push('store_id'); vals.push(storeId || null) }
+          // include is_discounted flag if provided
+          const hasIsDiscounted = schemaCache.hasColumn('sale_items', 'is_discounted')
+          if (hasIsDiscounted) { cols.push('is_discounted'); vals.push(!!it.is_discounted) }
           const placeholders = vals.map((_, i) => `$${i+1}`).join(',')
           const sql = `INSERT INTO sale_items (${cols.join(',')}) VALUES (${placeholders})`
           await client.query(sql, vals)
@@ -802,8 +808,9 @@ router.get('/:id', async (req, res) => {
   try {
     const hasStoreCol = schemaCache.hasColumn('sale_items', 'store_id')
     const hasVariantCol = schemaCache.hasColumn('sale_items', 'variant_id')
+    const hasIsDiscounted = schemaCache.hasColumn('sale_items', 'is_discounted')
   // build columns selecting from sale_items (alias si) and coalesce mrp from sale_items -> products -> products.price
-  const baseCols = 'si.id, si.product_id' + (hasVariantCol ? ', si.variant_id' : '') + ', si.sku, si.name, si.qty, si.price, si.tax_percent, si.line_total'
+  const baseCols = 'si.id, si.product_id' + (hasVariantCol ? ', si.variant_id' : '') + ', si.sku, si.name, si.qty, si.price, si.tax_percent, si.line_total' + (hasIsDiscounted ? ', si.is_discounted' : '')
   const hasMrpCol = schemaCache.hasColumn('sale_items', 'mrp')
   // only reference si.mrp when the column exists; otherwise fall back to product values
   const mrpExpr = hasMrpCol ? ', COALESCE(si.mrp, p.mrp, p.price) AS mrp' : ', COALESCE(p.mrp, p.price) AS mrp'

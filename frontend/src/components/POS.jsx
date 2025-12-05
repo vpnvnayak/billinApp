@@ -24,6 +24,7 @@ export default function POS({ editSaleId }) {
   const [newCustomerEmail, setNewCustomerEmail] = useState('')
   const [cart, setCart] = useState([])
   const [results, setResults] = useState([])
+  const [discounts, setDiscounts] = useState([]) // Store discounts keyed by product_id
   // when multiple products share the same SKU we show a single group and
   // prompt cashier to enter/select MRP. mrpPrompt = { group: [...products], sku, value }
   const [mrpPrompt, setMrpPrompt] = useState(null)
@@ -197,6 +198,8 @@ export default function POS({ editSaleId }) {
 
   useEffect(() => {
     loadCustomers()
+    // Load discounts on mount
+    loadDiscounts()
     function onChanged() { loadCustomers() }
     // expose legacy/global aliases so other pages or older bundles can trigger a reload
     if (typeof window !== 'undefined') {
@@ -212,6 +215,38 @@ export default function POS({ editSaleId }) {
       }
     }
   }, [])
+
+  // Load all discounts and index by product_id
+  async function loadDiscounts() {
+    try {
+      const r = await api.get('/marketing/discounts')
+      const discountMap = {}
+      for (const d of (r.data || [])) {
+        const items = d.items || []
+        for (const item of items) {
+          discountMap[item.product_id] = item.offer
+        }
+      }
+      setDiscounts(discountMap)
+    } catch (e) {
+      console.error('failed to load discounts', e)
+      setDiscounts({})
+    }
+  }
+
+  // Helper to calculate discounted price based on offer type
+  function getDiscountedPrice(mrp, offer) {
+    if (!offer || !offer.type || offer.type === 'none') return mrp
+    const m = Number(mrp) || 0
+    if (offer.type === 'percent') {
+      const pct = Number(offer.value) || 0
+      return m * (1 - pct / 100)
+    } else if (offer.type === 'fixed') {
+      const amt = Number(offer.value) || 0
+      return Math.max(0, m - amt)
+    }
+    return m
+  }
 
   // compute suggestions for customer search (filter by phone or name)
   useEffect(() => {
@@ -379,7 +414,19 @@ export default function POS({ editSaleId }) {
       // Normalize tax field names so UI always has tax_percent available (support tax_pct/taxPercent)
       const normalized = Object.assign({}, p)
       if (normalized.tax_percent == null) normalized.tax_percent = (normalized.taxPercent != null ? normalized.taxPercent : (Number(normalized.tax_pct) || 0))
-      const item = { ...normalized, qty: addedQty, cartId }
+      
+      // Check if product has a discount and apply it to the price (based on MRP)
+      const productOffer = discounts[p.id]
+      let finalPrice = Number(normalized.price) || 0
+      let isDiscounted = false
+      if (productOffer && productOffer.type && productOffer.type !== 'none') {
+        // Apply discount based on MRP
+        const mrpValue = Number(normalized.mrp) || finalPrice
+        finalPrice = getDiscountedPrice(mrpValue, productOffer)
+        isDiscounted = true
+      }
+      
+      const item = { ...normalized, qty: addedQty, cartId, price: finalPrice, is_discounted: isDiscounted }
       return [...c, item]
     })
     setQuery('')
@@ -487,7 +534,7 @@ export default function POS({ editSaleId }) {
         const taxRate = (Number(it.tax_percent) || 0) / 100.0
         const priceInclusive = Number(it.price) || 0
         const unitExclusive = taxRate > 0 ? (priceInclusive / (1 + taxRate)) : priceInclusive
-        return ({ product_id: safeInt32(it.id), variant_id: it.variant_id || null, use_product_stock: !!it.is_master, mrp: it.mrp != null ? Number(it.mrp) : null, sku: it.sku, name: it.name, qty: it.qty, price: Number(unitExclusive.toFixed(2)), tax_percent: it.tax_percent })
+        return ({ product_id: safeInt32(it.id), variant_id: it.variant_id || null, use_product_stock: !!it.is_master, mrp: it.mrp != null ? Number(it.mrp) : null, sku: it.sku, name: it.name, qty: it.qty, price: Number(unitExclusive.toFixed(2)), tax_percent: it.tax_percent, is_discounted: it.is_discounted || false })
       }),
       payment_method: payMethod,
       payment_breakdown: { card: Number(cardAmount)||0, cash: Number(cashGiven)||0, upi: Number(upiAmount)||0, discount_percent: Number(discountPercent)||0, discount_rs: Number(discountRs)||0, loyalty_used: Number(applyLoyaltyPoints)||0, remarks: remarks || '' },
@@ -771,7 +818,10 @@ export default function POS({ editSaleId }) {
                       <td>{it.mrp != null ? it.mrp : '-'}</td>
                       <td>{it.tax_percent}%</td>
                       <td>
-                        <input type="number" min="0" step="0.01" value={it.price} onChange={e => updateCartItem(it.cartId, { price: Number(e.target.value) })} className="small-input" />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <input type="number" min="0" step="0.01" value={it.price} onChange={e => updateCartItem(it.cartId, { price: Number(e.target.value) })} className="small-input" />
+                          {it.is_discounted && <span style={{ background: '#ff6b6b', color: 'white', padding: '2px 6px', borderRadius: 4, fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>OFFER</span>}
+                        </div>
                       </td>
                       <td>{(Number(it.qty || 0) * Number(it.price || 0)).toFixed(2)}</td>
                       <td><button className="btn btn-ghost" onClick={() => removeCartItem(it.cartId)}>Remove</button></td>

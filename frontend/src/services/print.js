@@ -47,8 +47,17 @@ export function buildThermalHtml(sale = {}, store = {}, payment_breakdown = {}, 
       mrp_total += lineMrpTotal
       const tax = (Number(it.tax_percent) || 0) / 100.0
       tax_total += lineRateTotal * tax
-      return `<tr><td style="font-weight:700">${name}</td><td style="text-align:right">${mrp ? fmtINR(mrp) : ''}</td><td style="text-align:center">${qty}</td><td style="text-align:right">${fmtINR((rate*(1+tax)).toFixed(2))}</td><td style="text-align:right">${fmtINR((lineRateTotal*(1+tax)).toFixed(2))}</td></tr>`
-  }).join('')
+      // Build discount label if product is marked as discounted
+      let discountLabel = ''
+      if (it.is_discounted) {
+        const discount = Math.max(0, mrp - rate)
+        const discountPct = mrp > 0 ? Math.round((discount / mrp) * 100) : 0
+        if (discountPct > 0) {
+          discountLabel = `<tr><td colspan="5" style="font-size:10px;padding-left:8px;color:#666;font-style:italic">⭐ OFFER: ${discountPct}% OFF</td></tr>`
+        }
+      }
+      return `<tr><td style="font-weight:700">${name}</td><td style="text-align:right">${mrp ? fmtINR(mrp) : ''}</td><td style="text-align:center">${qty}</td><td style="text-align:right">${fmtINR((rate*(1+tax)).toFixed(2))}</td><td style="text-align:right">${fmtINR((lineRateTotal*(1+tax)).toFixed(2))}</td></tr>${discountLabel}`
+    }).join('')
 
   const grand = subtotal + tax_total
     const savings = Math.max(0, (mrp_total - (subtotal*(1))))
