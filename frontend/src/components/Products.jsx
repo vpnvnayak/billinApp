@@ -149,23 +149,20 @@ export default function Products() {
                 const exportRows = rows.filter(r => !!r.is_repacking)
                 if (!exportRows.length) return
                 // Build PLU.txt: each row per product with format:
-                // store_seq,product_store_seq_padded6,NAME_UPPER,3,MRP
+                // sku/barcode,store_seq_padded6,NAME_UPPER,3,MRP
                 const lines = []
                 for (const r of exportRows) {
                   // First field: raw SKU or barcode without padding (fallback to store_seq when missing)
                   const rawId = (r.sku || r.barcode) ? String(r.sku || r.barcode).replace(/[\n\r,]+/g, ' ').trim() : (r.store_seq != null ? String(r.store_seq) : '')
-                  // Use SKU or barcode for the padded second field when available; otherwise padded store_seq
+                  // Second field: store_seq padded to 6 characters
                   const storeSeqStr = r.store_seq != null ? String(r.store_seq) : ''
-                  const storeSeqPadded = storeSeqStr ? storeSeqStr.padStart(6, '0') : ''.padStart(6, '0')
-                  const idCandidate = (r.sku || r.barcode) ? String(r.sku || r.barcode).trim() : storeSeqPadded
-                  const idSanitized = String(idCandidate).replace(/[\n\r,]+/g, ' ').trim()
-                  const idField = idSanitized.padStart(6, '0')
+                  const storeSeqPadded = storeSeqStr.padStart(6, '0')
                   // sanitize name: remove commas/newlines and uppercase
                   const name = String(r.name || '').replace(/[\n\r,]+/g, ' ').trim().toUpperCase()
                   const mrp = (r.mrp == null || r.mrp === '') ? 0 : Number(r.mrp)
                   const mrpFmt = Number.isFinite(mrp) ? mrp.toFixed(2) : '0.00'
                   // constant '3' as the fourth field per spec
-                  const rowLine = `${rawId},${idField},${name},3,${mrpFmt}`
+                  const rowLine = `${rawId},${storeSeqPadded},${name},3,${mrpFmt}`
                   lines.push(rowLine)
                 }
                 const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8;' })
