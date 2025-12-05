@@ -5,8 +5,14 @@ import ListControls from './ui/ListControls'
 import PaginationFooter from './ui/PaginationFooter'
 
 export default function Sales() {
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
+  // Helper to get today's date in YYYY-MM-DD format
+  const getTodayDate = () => {
+    const d = new Date()
+    return d.toISOString().split('T')[0]
+  }
+
+  const [from, setFrom] = useState(getTodayDate)
+  const [to, setTo] = useState(getTodayDate)
   const [paymentMethod, setPaymentMethod] = useState('')
   const [sales, setSales] = useState([])
   const [loading, setLoading] = useState(false)
@@ -41,7 +47,10 @@ export default function Sales() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { fetchSales() }, [])
+  useEffect(() => { 
+    // Fetch sales with default today's date filter applied
+    fetchSales({ from: getTodayDate(), to: getTodayDate() }) 
+  }, [])
   // register global print handlers so other parts of the app can use window.printThermal
   useEffect(() => { registerPrintHandlers && registerPrintHandlers() }, [])
 
